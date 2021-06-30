@@ -1,0 +1,48 @@
+---
+title: "Erigone project 2018 - script"
+author: - "**Maxime Dahirel** (script author)"
+date:
+output: 
+  html_document:
+    theme: yeti
+    toc: TRUE
+    toc_float: TRUE
+    code_download: TRUE
+editor_options: 
+  chunk_output_type: console
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+
+
+## **Introduction**
+
+The aims of this study were to:
+
+*to add*
+
+## **Starters and data wrangling**
+
+*to complete*
+
+```{r load-packages}
+library(arm)
+library(matrixStats)
+
+library(nadiv)
+
+library(cmdstanr) ## Stan backend
+library(brms) ## the interface we are using
+library(tidyverse)
+library(bayesplot)
+library(tidybayes)
+library(patchwork) #plotting
+library(lubridate) ## conflict with here
+
+library(here)
+
+options(mc.cores = 4)
+```
