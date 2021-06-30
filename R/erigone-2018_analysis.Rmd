@@ -46,3 +46,74 @@ library(here)
 
 options(mc.cores = 4)
 ```
+
+
+```{r load-raw-datafiles}
+## Load raw datasets
+data_main <- read_csv(here("data","erigone2018_females.csv"),
+                      col_types = cols(sex=col_character())) %>%  ##only females "F", if not given, will parse as logical
+            filter(generation > 0) # we only keep lab-born spiders for this analysis
+## should do better, use date of birth
+
+data_mothers <- read_csv(here("data","erigone2018_females.csv"),
+                      col_types = cols(sex=col_character())) %>%
+            filter(generation <2) %>% 
+  select(MOTHER= ID,
+         CT_length1_mom = CT_length1,
+         CT_length2_mom = CT_length1,
+         CT_width1_mom = CT_width1,
+         CT_width2_mom = CT_width2
+         )
+
+data_clutches <- read_csv(here("data","erigone2018_cocoons.csv"))
+
+pedigree <- read_csv(here("data","erigone2018_pedigree.csv"))
+
+sites <- read_csv(here("data","erigone2018_sites.csv"))
+
+## see later for environmental data, and male data
+```
+
+our choice of life history metrics is inspired (but not 100% identical) to Healy et al 2019 NEE:
+
+- Age at maturity (don't forget your notes on the use of interval sampling)
+- Adult longevity
+- Lifetime fecundity (number of eggs, number of cocoons)
+- Spread of reproduction through lifetime (to do; they use a Gini index, but their methods only really work with regular age classes, I think)
+
+We add to that
+
+- body size information
+- dispersal information (presence/absence of dispersal-relate dbehaviours; rappelling frequencies) . Note: the original data collection plan also included information about latency to tiptoe and number of tiptoe events even if they were not followed by rappelling, but due to miscommunication on my side, the two data collectors (me and MW) did not agree on how to count tiptoes in these columns (should we count all tiptoes vs only tiptoes that were not followed by rappelling). As a result data entered in these columns is meaningless and not used or reproduced here
+
+```{r data-wrangling-1}
+
+fecundity <- data_clutches %>% 
+  group_by(ID) %>% 
+  summarise(lifetime_fecundity=sum(N_spiderlings),
+            N_cocoons=sum(N_cocoons),
+            N_cocoons_hatched=sum(Cocoon_hatched))
+
+
+development_density <- data_clutches %>% 
+  select(MOTHER=ID,
+         date_egg=date_laying,
+         density=N_spiderlings,
+         clutch_order=clutchID)
+
+data <- left_join(data_main,fecundity) %>%
+  mutate(animal = ID) %>% 
+  left_join(pedigree, by="animal") %>% 
+  left_join(development_density) %>% 
+  left_join(data_mothers) %>% 
+  mutate(lifetime_fecundity=replace_na(lifetime_fecundity,0), 
+         ###individuals with no record in the fecundity are not NA, they failed to reproduce
+         N_cocoons=replace_na(N_cocoons,0),
+         N_cocoons_hatched=replace_na(N_cocoons_hatched,0)) %>% 
+  mutate(time_to_maturity = (ymd(date_maturity)-ymd(date_hatching)) %>%  as.numeric(),
+         adult_longevity = (ymd(date_death)-ymd(date_maturity)) %>%  as.numeric()
+         ) %>% 
+  mutate(generation = factor(generation),
+         clutchID = paste(MOTHER,"-",as.character(date_egg),sep="")###wild are assumed to not be direct siblings, all count as their own clutch
+  )
+```
