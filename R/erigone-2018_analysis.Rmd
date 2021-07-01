@@ -48,12 +48,37 @@ options(mc.cores = 4)
 ```
 
 
+```{r}
+read_csv(here("data","erigone2018_females.csv"),
+                      col_types = cols(sex=col_character())) %>%  ##only females "F", if not given, will parse as logical
+            filter(generation == 0) %>% 
+  select(captured_on) %>% 
+  distinct()
+
+## field days are April 12, 13, May 4, May 9
+
+## a quick confirmation of field notes that sampling was done in sunny weather
+read_csv(here("data","weather_data","pontorson_meteonet_2018.csv")) %>% 
+ filter(yday(date) %in% yday(ymd(c("2018-04-12","2018-04-13","2018-05-04","2018-05-09")))) %>% 
+  mutate(was_sampling=hour(date)>9 & hour(date)<18) %>% #sampling was between 10pm and 5pm actually, so larger margin
+ group_by(yday(date),was_sampling) %>% 
+ summarise(rain=sum(precip))
+
+## no rain indeed during sampling period
+```
+
+
+
+
 ```{r load-raw-datafiles}
 ## Load raw datasets
 data_main <- read_csv(here("data","erigone2018_females.csv"),
                       col_types = cols(sex=col_character())) %>%  ##only females "F", if not given, will parse as logical
             filter(generation > 0) # we only keep lab-born spiders for this analysis
 ## should do better, use date of birth
+
+
+
 
 data_mothers <- read_csv(here("data","erigone2018_females.csv"),
                       col_types = cols(sex=col_character())) %>%
@@ -73,6 +98,16 @@ sites <- read_csv(here("data","erigone2018_sites.csv"))
 
 ## see later for environmental data, and male data
 ```
+
+
+```{r}
+pedigree %>% filter(generation>0) %>% group_by(sex) %>% count()
+
+# counting the number of adults in the lab
+
+sum(data_clutches$N_spiderlings) # total number of spiderlings hatched in lab
+```
+
 
 our choice of life history metrics is inspired (but not 100% identical) to Healy et al 2019 NEE:
 
@@ -104,7 +139,6 @@ data <- left_join(data_main,fecundity) %>%
   mutate(animal = ID) %>% 
   left_join(pedigree) %>% 
   left_join(development_density) %>% 
-  left_join(data_mothers) %>% 
   mutate(lifetime_fecundity=replace_na(lifetime_fecundity,0), 
          ###individuals with no record in the fecundity are not NA, they failed to reproduce
          N_cocoons=replace_na(N_cocoons,0),
@@ -114,25 +148,58 @@ data <- left_join(data_main,fecundity) %>%
          ) %>% 
   mutate(generation = factor(generation),
          clutchID = paste(MOTHER,"-",as.character(date_egg),sep="")###wild are assumed to not be direct siblings, all count as their own clutch
-  )
+  ) %>% 
+  mutate(obsgap_maturity=case_when(date_maturity=="2018-05-22" | date_egg=="2018-05-22" ~ "yes",
+                             wday(date_maturity,week_start=1)==1 | wday(date_egg,week_start=1)==1 ~ "yes",
+                             date_maturity=="2018-05-02" | date_egg== "2018-05-02" |
+                               date_maturity=="2018-05-09" | date_egg=="2018-05-09" ~ "yes",
+                             T~ "no")) %>% 
+  mutate(obsgap_longevity=case_when(date_maturity=="2018-05-22" | date_death=="2018-05-22" ~ "yes",
+                             wday(date_maturity,week_start=1)==1 | wday(date_death,week_start=1)==1 ~ "yes",
+                             date_maturity=="2018-05-02" | date_death== "2018-05-02" |
+                               date_maturity=="2018-05-09" | date_death=="2018-05-09" ~ "yes",
+                             T~ "no"))
+
+## we add variables that say whether or not one of the two observations that govern phase duration
+## were made right after a gap in observation (WE, holdays, other)
+## leading to potential bias
+
 ```
 
 ```{r general-model-trialversion}
 data$adult_censored <- (data$outlived_experiment==TRUE | data$accidental_death==TRUE)
-data$delay_egg=scale(as.numeric(ymd(data$date_mating)-ymd(data$date_maturity)))[,1]
+data$time_for_repro=as.numeric(ymd(data$date_death)-ymd(data$date_mating))
 data$had.mate<- (is.na(data$date_mating)==FALSE)
+```
 
+```{r}
+temp_length<- data %>%
+  select(ID,CT_length1,CT_length2) %>% 
+  pivot_longer(cols=c(CT_length1,CT_length2),
+               names_to = "size_measurement",
+               names_prefix="CT_length",
+               values_to="CT_length") 
 
-data$CT_width=(data$CT_width1+data$CT_width2)/2
-data$s_CT_width=scale(data$CT_width)[,1]
+temp_width<- data %>%
+  select(ID,CT_width1,CT_width2) %>% 
+  pivot_longer(cols=c(CT_width1,CT_width2),
+               names_to = "size_measurement",
+               names_prefix="CT_width",
+               values_to="CT_width") 
 
+temp_size=left_join(temp_length,temp_width)
 
-data$CT_length=(data$CT_length1+data$CT_length2)/2
-data$s_CT_length=scale(data$CT_length)[,1]
+data<-data %>% 
+  select(-c(CT_length1,CT_length2,CT_width1,CT_width2)) %>% 
+  left_join(temp_size) %>% 
+  mutate(s_CT_width=scale(CT_width)[,1],
+         s_CT_length=scale(CT_length)[,1])
 
+data<-data %>% 
+  mutate(is.size.measured=1*(is.na(s_CT_width)==FALSE)) %>% 
+  mutate(s_CT_width=replace_na(s_CT_width,50),
+         s_CT_length=replace_na(s_CT_length,50))
 
-data$s_CT_width=replace_na(data$s_CT_width,0)
-data$s_cT_length=replace_na(data$s_CT_length,0)
 ```
 
 # models
@@ -141,41 +208,62 @@ first a model for the phenotypic correlation:
 
 ```{r}
 
-bf_dispersal<-bf(N_rappelling~ landscape + 
+bf_size<-bf(s_CT_length |
+              subset(is.size.measured==1) ~   ## only use actually measured spiders, exclude the NAs/the dummies put in their places
+              landscape +                     ## interpatch variation, fixed component
+             (1|patch)+                       ## interpatch variation, random component
+             (1|r|ID),                        ## within-patch individual (co)variation
+             family=gaussian)
+
+bf_dispersal<-bf(N_rappelling | 
+                   subset(size_measurement==1) ~ ## data is doubled due to putting size in the "long format"
+                                                 ## we only use one value per individual here, to avoid artificial doubling of N  
+                   landscape + 
+                   (1|patch)+
+                   (1|r|ID),
+                 family=poisson)
+
+bf_devtime<-bf(time_to_maturity | 
+                 subset(size_measurement==1) ~ 
+                 landscape + 
+                 obsgap_maturity +              ## we include this as a covariate to control whether obs gaps bias our times
              (1|patch)+
              (1|r|ID),family=poisson)
 
-bf_devtime<-bf(time_to_maturity~ landscape + 
+bf_longevity<-bf(adult_longevity|
+                   cens(adult_censored) +   ## some individuals were not observed until the end of their natural lifespan (accidental loss/killing or outlived the experiment)
+                   subset(size_measurement==1) ~ 
+                   landscape + 
+                   obsgap_longevity +
              (1|patch)+
              (1|r|ID),family=poisson)
 
-bf_longevity<-bf(adult_longevity|cens(adult_censored)~ landscape + 
+
+bf_fecundity<-bf(lifetime_fecundity|
+                   rate(time_for_repro) + ### we analysed the productivity (N offspring per day available to lay eggs)
+                   subset(time_for_repro>0 & had.mate &  ## so we exclude all unmated spiders and spiders that did not have time to lay eggs
+                            size_measurement==1) ~ 
+                   landscape + 
              (1|patch)+
              (1|r|ID),family=poisson)
 
-
-bf_LRS<-bf(lifetime_fecundity|cens(adult_censored) + subset(had.mate) ~ landscape + delay_egg + 
-             (1|patch)+
-             (1|r|ID),family=poisson)
-
+###move it to productivity with rate(time) and eliminate the delay_egg predictor (much more streamlined)
 
 prior<-c(
-  set_prior("normal(0,1)",class="Intercept",resp=c("Nrappelling")),
-  set_prior("normal(3.4,1)",class="Intercept",resp=c("timetomaturity","lifetimefecundity","adultlongevity")),
-  ### bonte pnas and duffey (longipalpis) suggest a month or 30-40 eggs (exp(3.4)) is a good ballpark prior
-  set_prior("normal(0,1)",class="b",resp=c("Nrappelling","lifetimefecundity")),
+  set_prior("normal(0,1)",class="Intercept",resp=c("Nrappelling","sCTlength","lifetimefecundity")),
+  set_prior("normal(3.4,1)",class="Intercept",resp=c("timetomaturity","adultlongevity")),
+  ### bonte pnas and duffey (longipalpis) suggest a month (exp(3.4)) is a good ballpark prior
+  set_prior("normal(0,1)",class="b",resp=c("Nrappelling","lifetimefecundity","sCTlength")),
   set_prior("normal(0,1)",class="b",resp=c("timetomaturity","adultlongevity")),
-  set_prior("normal(0,1)",class="sd",resp=c("Nrappelling","timetomaturity","lifetimefecundity","adultlongevity")),
+  set_prior("normal(0,1)",class="sd",resp=c("Nrappelling","timetomaturity","lifetimefecundity","adultlongevity","sCTlength")),
   set_prior("lkj(3)",class="cor")
 )
 
-mod=brm(mvbf(bf_dispersal+bf_devtime+bf_LRS+bf_longevity),
-        data=data,iter=4000,warmup=2000,data2=list(A=A),chains=4,prior=prior, ##4000/2000 works, but a few are below the 400bulk/400tail minimum threshold in Vehtari
-        # 4000 2000 works
-        # takes about two hours to run
-        # now what happens if i had longevity, if I interval censor devtime
-        # if i use only rappelling and when I split covar in west/east
-        control=list(adapt_delta=0.95,max_treedepth=15),
+mod=brm(mvbf(bf_dispersal+bf_devtime+bf_fecundity+bf_longevity+bf_size),
+        data=data,
+        iter=6000,warmup=3000,chains=4,
+        prior=prior,
+        control=list(adapt_delta=0.99,max_treedepth=15),
         seed=42,
         backend="cmdstanr")
 ```
@@ -186,47 +274,72 @@ we cannot go further and include father info since it is missing for G1, and we 
 
 ```{r}
 
-bf_dispersal<-bf(N_rappelling~ landscape + 
+
+             
+bf_size<-bf(s_CT_length |
+              subset(is.size.measured==1) ~   ## only use actually measured spiders, exclude the NAs/the dummies put in their places
+              landscape +                     ## interpatch variation, fixed component
+             (1|patch)+                       ## interpatch variation, random component
+              (1|q|MOTHER)+
+             (1|r|ID),                        ## within-patch individual (co)variation
+             family=gaussian)
+
+bf_dispersal<-bf(N_rappelling | 
+                   subset(size_measurement==1) ~ ## data is doubled due to putting size in the "long format"
+                                                 ## we only use one value per individual here, to avoid artificial doubling of N  
+                   landscape + 
+                   (1|patch)+
+                   (1|q|MOTHER)+
+                   (1|r|ID),
+                 family=poisson)
+
+bf_devtime<-bf(time_to_maturity | 
+                 subset(size_measurement==1) ~ 
+                 landscape + 
+                 obsgap_maturity +              ## we include this as a covariate to control whether obs gaps bias our times
              (1|patch)+
-             (1|q|MOTHER)+
+               (1|q|MOTHER)+
              (1|r|ID),family=poisson)
 
-bf_devtime<-bf(time_to_maturity~ landscape + 
+bf_longevity<-bf(adult_longevity|
+                   cens(adult_censored) +   ## some individuals were not observed until the end of their natural lifespan (accidental loss/killing or outlived the experiment)
+                   subset(size_measurement==1) ~ 
+                   landscape + 
+                   obsgap_longevity +
              (1|patch)+
-             (1|q|MOTHER)+
+               (1|q|MOTHER)+
              (1|r|ID),family=poisson)
 
-bf_longevity<-bf(adult_longevity|cens(adult_censored)~ landscape + 
+
+bf_fecundity<-bf(lifetime_fecundity|
+                   rate(time_for_repro) + ### we analysed the productivity (N offspring per day available to lay eggs)
+                   subset(time_for_repro>0 & had.mate &  ## so we exclude all unmated spiders and spiders that did not have time to lay eggs
+                            size_measurement==1) ~ 
+                   landscape + 
              (1|patch)+
-             (1|q|MOTHER)+
+               (1|q|MOTHER)+
              (1|r|ID),family=poisson)
 
-
-bf_LRS<-bf(lifetime_fecundity|cens(adult_censored) + subset(had.mate) ~ landscape + delay_egg + 
-             (1|patch)+
-             (1|q|MOTHER)+
-             (1|r|ID),family=poisson)
-
+###move it to productivity with rate(time) and eliminate the delay_egg predictor (much more streamlined)
 
 prior<-c(
-  set_prior("normal(0,1)",class="Intercept",resp=c("Nrappelling")),
-  set_prior("normal(3.4,1)",class="Intercept",resp=c("timetomaturity","lifetimefecundity","adultlongevity")),
-  ### bonte pnas and duffey (longipalpis) suggest a month or 30-40 eggs (exp(3.4)) is a good ballpark prior
-  set_prior("normal(0,1)",class="b",resp=c("Nrappelling","lifetimefecundity")),
+  set_prior("normal(0,1)",class="Intercept",resp=c("Nrappelling","sCTlength","lifetimefecundity")),
+  set_prior("normal(3.4,1)",class="Intercept",resp=c("timetomaturity","adultlongevity")),
+  ### bonte pnas and duffey (longipalpis) suggest a month (exp(3.4)) is a good ballpark prior
+  set_prior("normal(0,1)",class="b",resp=c("Nrappelling","lifetimefecundity","sCTlength")),
   set_prior("normal(0,1)",class="b",resp=c("timetomaturity","adultlongevity")),
-  set_prior("normal(0,1)",class="sd",resp=c("Nrappelling","timetomaturity","lifetimefecundity","adultlongevity")),
+  set_prior("normal(0,1)",class="sd",resp=c("Nrappelling","timetomaturity","lifetimefecundity","adultlongevity","sCTlength")),
   set_prior("lkj(3)",class="cor")
 )
 
-mod=brm(mvbf(bf_dispersal+bf_devtime+bf_LRS+bf_longevity),
-        data=data,iter=4000,warmup=2000,data2=list(A=A),chains=4,prior=prior, ##4000/2000 works, but a few are below the 400bulk/400tail minimum threshold in Vehtari
-        # 4000 2000 works
-        # takes about two hours to run
-        # now what happens if i had longevity, if I interval censor devtime
-        # if i use only rappelling and when I split covar in west/east
-        control=list(adapt_delta=0.95,max_treedepth=15),
+mod2=brm(mvbf(bf_dispersal+bf_devtime+bf_fecundity+bf_longevity+bf_size),
+        data=data,
+        iter=6000,warmup=3000,chains=4,
+        prior=prior,
+        control=list(adapt_delta=0.99,max_treedepth=20),
         seed=42,
         backend="cmdstanr")
+
 ```
 
 we find that most of the syndrome is driven by within-family variation (something that would not have been visible from the attempt at doing an animal model)
@@ -241,6 +354,14 @@ we find that most of the syndrome is driven by within-family variation (somethin
 
 
 
+### about the fig 1
+
+```{r}
+###recalculate the pland at different scales within R then do something inspired by this
+###here test is the file with PLANDS fro mMarie
+
+data %>% select(patch,landscape) %>% distinct() %>% right_join(test) %>% select(-c(effort,nbre_visit)) %>% filter(!is.na(landscape)) %>% pivot_longer(cols=-c(patch,landscape),names_prefix="PLAND_",names_to="radius",values_to="PLAND") %>% mutate(radius=as.numeric(radius)) %>% ggplot()+geom_line(aes(radius,PLAND,col=landscape,group=patch))
+```
 
 
 
@@ -264,7 +385,17 @@ A<-makeA(genealogy[,1:3]) %>%  # to make the A matrix, input has to contain only
          as.matrix() #unsparsify
 ```
 
+## on errors in times esyimates
 
+other approaches that the kind I've tried are tricky
+ interval censoring could work, but only with gaussian/lognormal and no ORLE
+ (trying to constrain sigma to move all variance to OLRE does not work)
+ (so wa cannot use it here because we want ID correlations, and we can't easily)
+ using interval censoring is tricky
+ not a question of poisson, same problem if we change to lognormal
+ o a way to check if our imprecision on maturity bias our conclusion would be to round/floor/ceiling times in weeks
+ and see if it affects our conclusions
+ using metanalysis type error is tricky too
 
-
+```
 
