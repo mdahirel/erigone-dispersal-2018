@@ -31,8 +31,10 @@ The aims of this study were to:
 ```{r load-packages}
 library(arm)
 library(matrixStats)
+library(ggmap)
+library(ggspatial)
 library(sf)
-
+library(osmdata)
 library(nadiv)
 
 library(cmdstanr) ## Stan backend
@@ -55,6 +57,49 @@ points<-st_read(here("data","erigone2018_GISlayers.gpkg"),
 
 patches<-st_read(here("data","erigone2018_GISlayers.gpkg"),
         layer="habitat_type")
+
+
+lon_min=-1.6802
+lat_min=48.6041
+lon_max=-1.4193
+lat_max=48.6506
+
+bounding_box<-opq(bbox=c(xmin=lon_min,ymin=lat_min,xmax=lon_max,ymax=lat_max))
+##chosen by drawing a rectangle on OSM website
+
+
+map_background <- get_stamenmap(bbox = c(left = lon_min, bottom = lat_min, right =
+  lon_max, top = lat_max), zoom = 13, maptype="terrain")
+
+patches_updated <- patches %>% 
+         filter(!is.na(plant)) %>% 
+         mutate(plant=fct_relevel(plant,c("puccinellia_dominant",
+                                          "puccinellia_partial"),after=0)) %>% 
+         mutate(`patch type`=fct_recode(plant,
+                                        `*Puccinellia maritima* dominant` = "puccinellia_dominant",
+                                        `*Puccinellia maritima* present` = "puccinellia_partial",
+                                        `other unfavourable` = "other"))
+
+points_updated <- points %>% 
+  mutate(`*E. longipalpis* found?` = fct_recode(factor(has.spider),
+                                                "yes"="1",
+                                                "no"="0")
+  )
+
+
+ggplot(data = patches_updated) +
+    inset_ggmap(map_background) + # add ggmap background
+    geom_sf(aes(fill = `patch type`),col=NA) + 
+    scale_fill_manual(values=c("#00cf3a","#afdab2","#e3e0df"))+
+    scale_shape_manual(values=c(21,19))+
+    geom_sf(data=points_updated,aes(pch=`*E. longipalpis* found?`),size=4)+
+      annotation_scale(location = "br") + # ggspatial scale on bottom left
+    annotation_north_arrow(location = "tr") + # ggspatial arrow on top right
+  coord_sf(xlim=c(-1.62,-1.47))+
+  theme(legend.position = "bottom")
+
+
+
 ```
 
 
