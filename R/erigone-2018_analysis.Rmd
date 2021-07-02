@@ -31,6 +31,7 @@ The aims of this study were to:
 ```{r load-packages}
 library(arm)
 library(matrixStats)
+library(sf)
 
 library(nadiv)
 
@@ -46,6 +47,16 @@ library(here)
 
 options(mc.cores = 4)
 ```
+
+
+```{r}
+points<-st_read(here("data","erigone2018_GISlayers.gpkg"),
+        layer="sampling_sites")
+
+patches<-st_read(here("data","erigone2018_GISlayers.gpkg"),
+        layer="habitat_type")
+```
+
 
 
 ```{r}
