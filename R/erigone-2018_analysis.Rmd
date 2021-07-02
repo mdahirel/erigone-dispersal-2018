@@ -96,6 +96,8 @@ pedigree <- read_csv(here("data","erigone2018_pedigree.csv"))
 
 sites <- read_csv(here("data","erigone2018_sites.csv"))
 
+pairings <- read_csv(here("data","erigone2018_pairings.csv"))
+
 ## see later for environmental data, and male data
 ```
 
@@ -106,6 +108,55 @@ pedigree %>% filter(generation>0) %>% group_by(sex) %>% count()
 # counting the number of adults in the lab
 
 sum(data_clutches$N_spiderlings) # total number of spiderlings hatched in lab
+
+
+sum(sites$N_adult_females) # number of females caught total
+
+sites %>% group_by(landscape,is_habitat) %>% 
+  summarise(N_patches_with_spiders=sum(N_adult_females>0),
+            N_patches_total=n())
+
+## number of wild females that produced cocoons and babies
+data_clutches %>% 
+  mutate(animal=ID) %>% 
+  left_join(pedigree) %>% 
+  filter(generation==0) %>% 
+  group_by(ID) %>% 
+  summarise(had_cocoons=max(N_cocoons>0),had_babies=max(N_spiderlings>0)) %>% 
+  summarise(N_with_cocoons=sum(had_cocoons),N_with_babies=sum(had_babies))
+  
+  
+pedigree %>% filter(generation>0) %>% group_by(sex) %>% count()
+
+# counting the number of adults in the lab
+
+
+pedigree %>% group_by(sex,generation) %>% count()
+
+pedigree %>% 
+  select(MOTHER,FATHER) %>% distinct() %>% ##keep all unique MOTHER/FATHER pairs
+  filter(is.na(FATHER)==FALSE) %>% 
+  group_by(FATHER) %>% summarise(N_uses_per_male=length(FATHER)) %>%
+  summarise(median=median(N_uses_per_male),
+            mean=mean(N_uses_per_male),
+            percent_more_than_one=mean(N_uses_per_male>1),
+            min=min(N_uses_per_male),max=max(N_uses_per_male))
+####mmm_but this is only for the ones that were kept to adults.
+#### did we keep that info for the eggs???
+
+### the version for all matings
+pairings %>% 
+  filter(is.na(mateID)==FALSE) %>% 
+  group_by(mateID) %>% summarise(N_uses_per_male=length(mateID)) %>%
+  summarise(median=median(N_uses_per_male),
+            mean=mean(N_uses_per_male),
+            percent_more_than_one=mean(N_uses_per_male>1),
+            min=min(N_uses_per_male),max=max(N_uses_per_male))
+
+
+
+sum(is.na(data_main$date_mating))
+
 ```
 
 
@@ -195,11 +246,6 @@ data<-data %>%
   mutate(s_CT_width=scale(CT_width)[,1],
          s_CT_length=scale(CT_length)[,1])
 
-data<-data %>% 
-  mutate(is.size.measured=1*(is.na(s_CT_width)==FALSE)) %>% 
-  mutate(s_CT_width=replace_na(s_CT_width,50),
-         s_CT_length=replace_na(s_CT_length,50))
-
 ```
 
 # models
@@ -208,15 +254,15 @@ first a model for the phenotypic correlation:
 
 ```{r}
 
-bf_size<-bf(s_CT_length |
-              subset(is.size.measured==1) ~   ## only use actually measured spiders, exclude the NAs/the dummies put in their places
+bf_size<-bf(s_CT_length |mi() ~   ## use in-model imputation
               landscape +                     ## interpatch variation, fixed component
              (1|patch)+                       ## interpatch variation, random component
              (1|r|ID),                        ## within-patch individual (co)variation
              family=gaussian)
 
 bf_dispersal<-bf(N_rappelling | 
-                   subset(size_measurement==1) ~ ## data is doubled due to putting size in the "long format"
+                   subset(size_measurement==1 & 
+                            natural_death_before_dispersal==0) ~ ## data is doubled due to putting size in the "long format"
                                                  ## we only use one value per individual here, to avoid artificial doubling of N  
                    landscape + 
                    (1|patch)+
@@ -276,16 +322,16 @@ we cannot go further and include father info since it is missing for G1, and we 
 
 
              
-bf_size<-bf(s_CT_length |
-              subset(is.size.measured==1) ~   ## only use actually measured spiders, exclude the NAs/the dummies put in their places
+bf_size<-bf(s_CT_length |mi() ~   ## use in-model imputation
               landscape +                     ## interpatch variation, fixed component
              (1|patch)+                       ## interpatch variation, random component
               (1|q|MOTHER)+
              (1|r|ID),                        ## within-patch individual (co)variation
              family=gaussian)
 
-bf_dispersal<-bf(N_rappelling | 
-                   subset(size_measurement==1) ~ ## data is doubled due to putting size in the "long format"
+bf_dispersal<-bf(N_rappelling |
+                   subset(size_measurement==1 & 
+                            natural_death_before_dispersal==0) ~ ## data is doubled due to putting size in the "long format"
                                                  ## we only use one value per individual here, to avoid artificial doubling of N  
                    landscape + 
                    (1|patch)+
@@ -396,6 +442,28 @@ other approaches that the kind I've tried are tricky
  o a way to check if our imprecision on maturity bias our conclusion would be to round/floor/ceiling times in weeks
  and see if it affects our conclusions
  using metanalysis type error is tricky too
+```{r}
+bf_size<-bf(s_CT_length |mi() ~   ## only use actually measured spiders, exclude the NAs/the dummies put in their places
+              landscape +                     ## interpatch variation, fixed component
+             (1|patch)+                       ## interpatch variation, random component
+             (1|r|ID),                        ## within-patch individual (co)variation
+             family=gaussian)
+
+prior<-c(
+  set_prior("normal(0,1)",class="Intercept"),
+  set_prior("normal(0,1)",class="b"),
+  set_prior("normal(0,1)",class="sd")
+)
+
+mod2=brm(bf_size,
+        data=data,
+        iter=2000,warmup=1000,chains=4,
+        prior=prior,
+        control=list(adapt_delta=0.99,max_treedepth=20),
+        seed=42,
+        backend="cmdstanr")
 
 ```
+
+
 
