@@ -77,7 +77,8 @@ data_main <- read_csv(here("data","erigone2018_females.csv"),
             filter(generation > 0) # we only keep lab-born spiders for this analysis
 ## should do better, use date of birth
 
-
+###NOTE to round sizes to nearest 0.1mm, with clear indication that raw-raw data are "more precise" but that's just artifact from 
+## measurement software
 
 
 data_mothers <- read_csv(here("data","erigone2018_females.csv"),
