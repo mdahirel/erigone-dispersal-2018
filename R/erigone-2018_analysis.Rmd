@@ -31,10 +31,14 @@ The aims of this study were to:
 ```{r load-packages}
 library(arm)
 library(matrixStats)
-library(ggmap)
+
+## spatial stuff
+#library(ggmap) #still needed?? not sure
 library(ggspatial)
-library(sf)
 library(osmdata)
+library(sf)
+
+## pedigree stuff (still needed??)
 library(nadiv)
 
 library(cmdstanr) ## Stan backend
@@ -42,6 +46,7 @@ library(brms) ## the interface we are using
 library(tidyverse)
 library(bayesplot)
 library(tidybayes)
+library(ggtext)
 library(patchwork) #plotting
 library(lubridate) ## conflict with here
 
@@ -50,104 +55,7 @@ library(here)
 options(mc.cores = 4)
 ```
 
-
-```{r}
-points<-st_read(here("data","erigone2018_GISlayers.gpkg"),
-        layer="sampling_sites")
-
-patches<-st_read(here("data","erigone2018_GISlayers.gpkg"),
-        layer="habitat_type")
-
-coastline<-st_read(here("data","erigone2018_GISlayers.gpkg"),
-        layer="coastline")
-
-lon_min=-1.6802
-lat_min=48.6041
-lon_max=-1.4193
-lat_max=48.6506
-
-bounding_box<-opq(bbox=c(xmin=lon_min,ymin=lat_min,xmax=lon_max,ymax=lat_max))
-##chosen by drawing a rectangle on OSM website
-
-patches_updated <- patches %>% 
-         filter(!is.na(plant)) %>% 
-         mutate(plant=fct_relevel(plant,c("puccinellia_dominant",
-                                          "puccinellia_partial"),after=0)) %>% 
-         mutate(`habitat type`=fct_recode(plant,
-                                        `*Puccinellia maritima* dominant` = "puccinellia_dominant",
-                                        `*Puccinellia maritima* present` = "puccinellia_partial",
-                                        `other unfavourable land` = "other"))
-
-points_updated <- points %>% 
-  mutate(`*E. longipalpis* found?` = fct_recode(factor(has.spider),
-                                                "yes"="1",
-                                                "no"="0")
-  )
-
-
-plot_1b <- ggplot(data = patches_updated) +
-    geom_sf(aes(fill = `habitat type`,col=`habitat type`)) + 
-    geom_sf(data=points_updated,aes(pch=`*E. longipalpis* found?`),size=4)+
-    scale_fill_manual(values=c("#00cf3a","#afdab2",NA))+
-    scale_colour_manual(values=c("#00cf3a","#afdab2",NA))+
-    scale_shape_manual(values=c(21,19))+
-      annotation_scale(location = "br") + # ggspatial scale on bottom left
-    annotation_north_arrow(location = "tr") + # ggspatial arrow on top right
-  coord_sf(xlim=c(-1.63,-1.47),
-           ylim=c(48.615,48.655))+
-  theme_bw()+
-  theme(legend.position = "bottom",
-        legend.text=element_markdown(),
-        legend.title=element_markdown(),
-        panel.background = element_rect(fill="lightblue"),
-        panel.grid.major = element_blank(),
-        panel.grid.minor = element_blank())
-
-
-plot_1a <- ggplot() +
-  geom_sf(data=coastline)+
-    geom_sf(data=points_updated[1,],pch=19,size=5)+
-  coord_sf(xlim=c(-10.854,11.074),ylim=c(41.925,55.653))+
-  theme_bw()+
-  theme(
-        panel.background = element_rect(fill="lightblue"),
-        panel.grid.major = element_blank(),
-        panel.grid.minor = element_blank())
-
-
-plot_1c<-ggplot(tibble(radius=c(1:20)*100,PLAND=exp(-0.5*c(1:20))))+ ##placeholder plot for the PLAND=f(radius) plot
-  geom_line(aes(radius,PLAND))+
-  theme_bw()
-
-((plot_1a+plot_1b +
-  plot_layout(guides = 'collect'))&
-  theme(legend.position = "bottom"))/(plot_1c) 
-
-```
-
-
-
-```{r}
-read_csv(here("data","erigone2018_females.csv"),
-                      col_types = cols(sex=col_character())) %>%  ##only females "F", if not given, will parse as logical
-            filter(generation == 0) %>% 
-  select(captured_on) %>% 
-  distinct()
-
-## field days are April 12, 13, May 4, May 9
-
-## a quick confirmation of field notes that sampling was done in sunny weather
-read_csv(here("data","weather_data","pontorson_meteonet_2018.csv")) %>% 
- filter(yday(date) %in% yday(ymd(c("2018-04-12","2018-04-13","2018-05-04","2018-05-09")))) %>% 
-  mutate(was_sampling=hour(date)>9 & hour(date)<18) %>% #sampling was between 10pm and 5pm actually, so larger margin
- group_by(yday(date),was_sampling) %>% 
- summarise(rain=sum(precip))
-
-## no rain indeed during sampling period
-```
-
-
-
+let's load the main data:
 
 ```{r load-raw-datafiles}
 ## Load raw datasets
@@ -180,6 +88,137 @@ pairings <- read_csv(here("data","erigone2018_pairings.csv"))
 
 ## see later for environmental data, and male data
 ```
+
+now let's load what we need for maps:
+
+```{r}
+points<-st_read(here("data","erigone2018_GISlayers.gpkg"),
+        layer="sampling_sites")
+
+patches<-st_read(here("data","erigone2018_GISlayers.gpkg"),
+        layer="habitat_type")
+
+coastline<-st_read(here("data","erigone2018_GISlayers.gpkg"),
+        layer="coastline")
+```
+
+
+```{r}
+
+patches_updated <- patches %>% 
+         filter(!is.na(plant)) %>% 
+         mutate(plant=fct_relevel(plant,c("puccinellia_dominant",
+                                          "puccinellia_partial"),after=0)) %>% 
+         mutate(`habitat type`=fct_recode(plant,
+                                        `*Puccinellia maritima* dominant` = "puccinellia_dominant",
+                                        `*Puccinellia maritima* present` = "puccinellia_partial",
+                                        `other unfavourable land` = "other"))
+
+points_updated <- points %>% 
+  mutate(`*E. longipalpis* found?` = fct_recode(factor(has.spider),
+                                                "yes"="1",
+                                                "no"="0")
+  )
+
+### a general map of western europe
+plot_1a <- ggplot() +
+  geom_sf(data=coastline)+
+    geom_sf(data=points_updated[1,],pch=19,size=5)+
+  coord_sf(xlim=c(-10.854,11.074),ylim=c(41.925,55.653))+
+  theme_bw()+
+  theme(
+        panel.background = element_rect(fill="lightblue"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
+
+### the map of the study site
+plot_1b <- ggplot(data = patches_updated) +
+    geom_sf(aes(fill = `habitat type`,col=`habitat type`)) + 
+    geom_sf(data=points_updated,aes(pch=`*E. longipalpis* found?`),size=4)+
+    scale_fill_manual(values=c("#00cf3a","#afdab2",NA))+
+    scale_colour_manual(values=c("#00cf3a","#afdab2",NA))+
+    scale_shape_manual(values=c(21,19))+
+      annotation_scale(location = "br") + # ggspatial scale on bottom left
+    annotation_north_arrow(location = "tr",
+                           style = north_arrow_fancy_orienteering) + # ggspatial arrow on top right
+  coord_sf(xlim=c(-1.63,-1.47),
+           ylim=c(48.615,48.655))+
+  theme_bw()+
+  theme(legend.position = "bottom",
+        legend.text=element_markdown(),
+        legend.title=element_markdown(),
+        panel.background = element_rect(fill="lightblue"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
+
+
+
+((plot_1a+plot_1b +
+  plot_layout(guides = 'collect'))&
+  theme(legend.position = "bottom"))
+```
+
+now something for the supplementary that tells us how much habitat there is 1000m aroun deach sampled site
+```{r}
+## we create a sf with only favourable patches
+favourable=patches %>% 
+  filter(plant=="puccinellia_dominant")
+## we make a buffer
+buffers1000=st_buffer(points_updated,dist=1000)
+
+sum_areas=st_intersection(st_make_valid(favourable),buffers1000) %>% 
+  mutate(area=st_area(geom)) %>% 
+  group_by(name) %>% 
+  summarise(area=sum(area,na.rm = TRUE)) %>% 
+  st_drop_geometry() %>% 
+  select(patch=name,area)
+## a warning here that may need to be checked
+
+habitat_avail=left_join(sites,sum_areas) %>% 
+  filter(is_habitat=="y") %>% 
+  mutate(percent_area=100*as.numeric(area)/(pi*1000*1000)) %>% 
+  mutate(landscape=fct_relevel(landscape,"west",after=0))
+##just reordering so that west=left in plots
+
+habitat_avail %>% 
+  group_by(landscape) %>% 
+  summarise(mean=mean(percent_area),
+            min=min(percent_area),
+            max=max(percent_area)
+            )
+
+habitat_avail %>% 
+  ggplot()+
+  geom_jitter(aes(landscape,percent_area),position=position_jitter(width=0.1))+
+  scale_y_continuous("")+
+  ggtitle("Percentage of area in a 1000m radius around sampling site occupied by *Puccinellia*-dominated meadows")+
+  theme_bw()
+```
+
+
+
+```{r}
+read_csv(here("data","erigone2018_females.csv"),
+                      col_types = cols(sex=col_character())) %>%  ##only females "F", if not given, will parse as logical
+            filter(generation == 0) %>% 
+  select(captured_on) %>% 
+  distinct()
+
+## field days are April 12, 13, May 4, May 9
+
+## a quick confirmation of field notes that sampling was done in sunny weather
+read_csv(here("data","weather_data","pontorson_meteonet_2018.csv")) %>% 
+ filter(yday(date) %in% yday(ymd(c("2018-04-12","2018-04-13","2018-05-04","2018-05-09")))) %>% 
+  mutate(was_sampling=hour(date)>9 & hour(date)<18) %>% #sampling was between 10pm and 5pm actually, so larger margin
+ group_by(yday(date),was_sampling) %>% 
+ summarise(rain=sum(precip))
+
+## no rain indeed during sampling period
+```
+
+
+
+
 
 
 ```{r}
@@ -242,10 +281,9 @@ sum(is.na(data_main$date_mating))
 
 our choice of life history metrics is inspired (but not 100% identical) to Healy et al 2019 NEE:
 
-- Age at maturity (don't forget your notes on the use of interval sampling)
+- Age at maturity
 - Adult longevity
-- Lifetime fecundity (number of eggs, number of cocoons)
-- Spread of reproduction through lifetime (to do; they use a Gini index, but their methods only really work with regular age classes, I think)
+- Fecundity
 
 We add to that
 
@@ -326,6 +364,17 @@ data<-data %>%
   mutate(s_CT_width=scale(CT_width)[,1],
          s_CT_length=scale(CT_length)[,1])
 
+```
+
+
+```{r}
+mean(data$date_mating-data$date_maturity,na.rm=TRUE)
+sd(data$date_mating-data$date_maturity,na.rm=TRUE)
+range(as.numeric(data$date_mating-data$date_maturity),na.rm=TRUE)
+
+ sum(data$outlived_experiment)# how many right censored
+ 
+ sum(!is.na(data$CT_width) & data$size_measurement==1) ## how many females measured
 ```
 
 # models
