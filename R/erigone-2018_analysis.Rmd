@@ -58,6 +58,8 @@ points<-st_read(here("data","erigone2018_GISlayers.gpkg"),
 patches<-st_read(here("data","erigone2018_GISlayers.gpkg"),
         layer="habitat_type")
 
+coastline<-st_read(here("data","erigone2018_GISlayers.gpkg"),
+        layer="coastline")
 
 lon_min=-1.6802
 lat_min=48.6041
@@ -67,18 +69,14 @@ lat_max=48.6506
 bounding_box<-opq(bbox=c(xmin=lon_min,ymin=lat_min,xmax=lon_max,ymax=lat_max))
 ##chosen by drawing a rectangle on OSM website
 
-
-map_background <- get_stamenmap(bbox = c(left = lon_min, bottom = lat_min, right =
-  lon_max, top = lat_max), zoom = 13, maptype="terrain")
-
 patches_updated <- patches %>% 
          filter(!is.na(plant)) %>% 
          mutate(plant=fct_relevel(plant,c("puccinellia_dominant",
                                           "puccinellia_partial"),after=0)) %>% 
-         mutate(`patch type`=fct_recode(plant,
+         mutate(`habitat type`=fct_recode(plant,
                                         `*Puccinellia maritima* dominant` = "puccinellia_dominant",
                                         `*Puccinellia maritima* present` = "puccinellia_partial",
-                                        `other unfavourable` = "other"))
+                                        `other unfavourable land` = "other"))
 
 points_updated <- points %>% 
   mutate(`*E. longipalpis* found?` = fct_recode(factor(has.spider),
@@ -87,18 +85,43 @@ points_updated <- points %>%
   )
 
 
-ggplot(data = patches_updated) +
-    inset_ggmap(map_background) + # add ggmap background
-    geom_sf(aes(fill = `patch type`),col=NA) + 
-    scale_fill_manual(values=c("#00cf3a","#afdab2","#e3e0df"))+
-    scale_shape_manual(values=c(21,19))+
+plot_1b <- ggplot(data = patches_updated) +
+    geom_sf(aes(fill = `habitat type`,col=`habitat type`)) + 
     geom_sf(data=points_updated,aes(pch=`*E. longipalpis* found?`),size=4)+
+    scale_fill_manual(values=c("#00cf3a","#afdab2",NA))+
+    scale_colour_manual(values=c("#00cf3a","#afdab2",NA))+
+    scale_shape_manual(values=c(21,19))+
       annotation_scale(location = "br") + # ggspatial scale on bottom left
     annotation_north_arrow(location = "tr") + # ggspatial arrow on top right
-  coord_sf(xlim=c(-1.62,-1.47))+
-  theme(legend.position = "bottom")
+  coord_sf(xlim=c(-1.63,-1.47),
+           ylim=c(48.615,48.655))+
+  theme_bw()+
+  theme(legend.position = "bottom",
+        legend.text=element_markdown(),
+        legend.title=element_markdown(),
+        panel.background = element_rect(fill="lightblue"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
 
 
+plot_1a <- ggplot() +
+  geom_sf(data=coastline)+
+    geom_sf(data=points_updated[1,],pch=19,size=5)+
+  coord_sf(xlim=c(-10.854,11.074),ylim=c(41.925,55.653))+
+  theme_bw()+
+  theme(
+        panel.background = element_rect(fill="lightblue"),
+        panel.grid.major = element_blank(),
+        panel.grid.minor = element_blank())
+
+
+plot_1c<-ggplot(tibble(radius=c(1:20)*100,PLAND=exp(-0.5*c(1:20))))+ ##placeholder plot for the PLAND=f(radius) plot
+  geom_line(aes(radius,PLAND))+
+  theme_bw()
+
+((plot_1a+plot_1b +
+  plot_layout(guides = 'collect'))&
+  theme(legend.position = "bottom"))/(plot_1c) 
 
 ```
 
