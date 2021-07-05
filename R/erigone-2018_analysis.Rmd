@@ -134,9 +134,10 @@ plot_1a <- ggplot() +
 ### the map of the study site
 plot_1b <- ggplot(data = patches_updated) +
     geom_sf(aes(fill = `habitat type`,col=`habitat type`)) + 
-    geom_sf(data=points_updated,aes(pch=`*E. longipalpis* found?`),size=4)+
-    scale_fill_manual(values=c("#00cf3a","#afdab2",NA))+
-    scale_colour_manual(values=c("#00cf3a","#afdab2",NA))+
+    geom_sf(data=points_updated,aes(pch=`*E. longipalpis* found?`),size=3)+
+    scale_fill_manual(values=c("#238443","#addd8e","#ffffe5"))+
+    scale_colour_manual(values=c("#238443","#addd8e","#ffffe5"))+
+  ##colors based on the YlGn palette in ColorBrewer
     scale_shape_manual(values=c(21,19))+
       annotation_scale(location = "br") + # ggspatial scale on bottom left
     annotation_north_arrow(location = "tr",
@@ -425,15 +426,17 @@ newdata_pop<-sites2 %>%
   add_fitted_draws(mod_pop)
   
 plot2<-ggplot()+
-  geom_jitter(data=sites2,aes(landscape,N_adult_females/person_hours_on_patch),
-              position=position_jitter(width=0.2),size=2,col="darkgrey")+
   stat_eye(data=newdata_pop,aes(landscape,.value),
            slab_alpha=0.5,
+           fill="#238443",
            .width=c(0.001,0.95),
            point_interval="mean_hdi")+
+  geom_jitter(data=sites2,aes(landscape,N_adult_females/person_hours_on_patch),
+              position=position_jitter(width=0.2),pch=21,size=2,fill="white")+
   scale_x_discrete("landscape of origin")+
   scale_y_continuous("Population density (female *E. longipalpis* per person-hour)")+
-  theme_bw()
+  theme_bw()+
+  theme(axis.title.y = element_markdown())
 
 plot2
 ```
@@ -523,9 +526,11 @@ newdata_maturity<-data %>%
   add_fitted_draws(mod,resp="timetomaturity",re_formula = NA)
 
 plot3_a<-ggplot()+
-  geom_boxplot(data=subset(data,is.valid_maturity==1),aes(landscape,time_to_maturity, group=patch))+
+  geom_boxplot(data=subset(data,is.valid_maturity==1),
+               aes(landscape,time_to_maturity, group=patch),col="grey50")+
   stat_eye(data=newdata_maturity,aes(landscape,.value),
            slab_alpha=0.5,
+           fill="#238443",
            .width=c(0.001,0.95),
            point_interval="mean_hdi")+
   scale_x_discrete("")+
@@ -534,16 +539,19 @@ plot3_a<-ggplot()+
 newdata_size<-data %>% 
   select(landscape) %>% 
   distinct() %>%  
-  add_fitted_draws(mod,resp="sCTwidth",re_formula = NA)
+  add_fitted_draws(mod,resp="sCTwidth",re_formula = NA) %>% 
+  mutate(.value=(.value*sd(data$CT_width,na.rm=TRUE))+mean(data$CT_width,na.rm=TRUE))
+# we back transform the predictions from scaled values to observed
 
 plot3_b<-ggplot()+
-  geom_boxplot(data=data,aes(landscape,s_CT_width, group=patch))+
+  geom_boxplot(data=data,aes(landscape,CT_width, group=patch),col="grey50")+
   stat_eye(data=newdata_size,aes(landscape,.value),
            slab_alpha=0.5,
+           fill="#238443",
            .width=c(0.001,0.95),
            point_interval="mean_hdi")+
   scale_x_discrete("")+
-  scale_y_continuous("Adult size (SD units)")
+  scale_y_continuous("Adult size (cephalothorax width, mm)")
 
 newdata_dispersal<-data %>% 
   select(landscape) %>% 
@@ -552,9 +560,11 @@ newdata_dispersal<-data %>%
   add_fitted_draws(mod,resp="Nrappelling",re_formula = NA)
 
 plot3_c<-ggplot()+
-  geom_boxplot(data=subset(data,is.valid_dispersal==1),aes(landscape,N_rappelling, group=patch))+
+  geom_boxplot(data=subset(data,is.valid_dispersal==1),
+               aes(landscape,N_rappelling, group=patch),col="grey50")+
   stat_eye(data=newdata_dispersal,aes(landscape,.value),
            slab_alpha=0.5,
+           fill="#238443",
            .width=c(0.001,0.95),
            point_interval="mean_hdi")+
   scale_x_discrete("")+
@@ -567,9 +577,11 @@ newdata_fecundity<-data %>%
   add_fitted_draws(mod,resp="lifetimefecundity",re_formula = NA)
 
 plot3_d<-ggplot()+
-  geom_boxplot(data=subset(data,is.valid_fecundity==1),aes(landscape,lifetime_fecundity/time_for_repro, group=patch))+
+  geom_boxplot(data=subset(data,is.valid_fecundity==1),
+               aes(landscape,lifetime_fecundity/time_for_repro, group=patch),col="grey50")+
   stat_eye(data=newdata_fecundity,aes(landscape,.value),
            slab_alpha=0.5,
+           fill="#238443",
            .width=c(0.001,0.95),
            point_interval="mean_hdi")+
   scale_x_discrete("landscape of origin")+
@@ -583,9 +595,11 @@ newdata_longevity<-data %>%
   add_fitted_draws(mod,resp="adultlongevity",re_formula = NA)
 
 plot3_e<-ggplot()+
-  geom_boxplot(data=subset(data,is.valid_longevity==1),aes(landscape,adult_longevity, group=patch))+
+  geom_boxplot(data=subset(data,is.valid_longevity==1),
+               aes(landscape,adult_longevity, group=patch),col="grey50")+
   stat_eye(data=newdata_longevity,aes(landscape,.value),
            slab_alpha=0.5,
+           fill="#238443",
            .width=c(0.001,0.95),
            point_interval="mean_hdi")+
   scale_x_discrete("")+
