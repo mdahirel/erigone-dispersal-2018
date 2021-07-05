@@ -368,7 +368,9 @@ data<-data %>%
   select(-c(CT_length1,CT_length2,CT_width1,CT_width2)) %>% 
   left_join(temp_size) %>% 
   mutate(s_CT_width=scale(CT_width)[,1],
-         s_CT_length=scale(CT_length)[,1])
+         s_CT_length=scale(CT_length)[,1]) %>% 
+  mutate(landscape=fct_relevel(landscape,"west",after=0))
+## we re-order so west is left in plots like in maps
 
 ```
 
@@ -388,6 +390,54 @@ range(as.numeric(data$date_mating-data$date_maturity),na.rm=TRUE)
 ```
 
 # models
+
+
+let's analyse population densities
+
+```{r}
+sites2<-sites %>% 
+  mutate(landscape=fct_relevel(landscape,"west",after=0)) %>% 
+  filter(is_habitat=="y")
+  
+
+mod_pop=brm(
+  N_adult_females|rate(person_hours_on_patch)~
+    landscape,family=poisson,
+  data=sites2,
+  prior=c(
+    set_prior("normal(0,1)",class="Intercept"),
+    set_prior("normal(0,1)",class="b")
+  ),
+        iter=6000,warmup=3000,chains=4,
+        seed=42,
+        backend="cmdstanr"
+)
+```
+
+
+a draft of the figure
+
+```{r}
+newdata_pop<-sites2 %>% 
+  select(landscape) %>% 
+  distinct() %>% 
+  mutate(person_hours_on_patch=1) %>% 
+  add_fitted_draws(mod_pop)
+  
+plot2<-ggplot()+
+  geom_jitter(data=sites2,aes(landscape,N_adult_females/person_hours_on_patch),
+              position=position_jitter(width=0.2),size=2,col="darkgrey")+
+  stat_eye(data=newdata_pop,aes(landscape,.value),
+           slab_alpha=0.5,
+           .width=c(0.001,0.95),
+           point_interval="mean_hdi")+
+  scale_x_discrete("landscape of origin")+
+  scale_y_continuous("Population density (female *E. longipalpis* per person-hour)")+
+  theme_bw()
+
+plot2
+```
+
 
 first a model for the phenotypic correlation:
 
@@ -638,22 +688,6 @@ we find that most of the syndrome is driven by within-family variation (somethin
 
 
 
-### about the fig 1
-
-```{r}
-###recalculate the pland at different scales within R then do something inspired by this
-###here test is the file with PLANDS fro mMarie
-
-data %>% select(patch,landscape) %>% distinct() %>% right_join(test) %>% select(-c(effort,nbre_visit)) %>% filter(!is.na(landscape)) %>% pivot_longer(cols=-c(patch,landscape),names_prefix="PLAND_",names_to="radius",values_to="PLAND") %>% mutate(radius=as.numeric(radius)) %>% ggplot()+geom_line(aes(radius,PLAND,col=landscape,group=patch))
-```
-
-
-
-
-
-
-
-
 ### annex what about an animal model?
 
 
@@ -680,28 +714,6 @@ other approaches that the kind I've tried are tricky
  o a way to check if our imprecision on maturity bias our conclusion would be to round/floor/ceiling times in weeks
  and see if it affects our conclusions
  using metanalysis type error is tricky too
-```{r}
-bf_size<-bf(s_CT_length |mi() ~   ## only use actually measured spiders, exclude the NAs/the dummies put in their places
-              landscape +                     ## interpatch variation, fixed component
-             (1|patch)+                       ## interpatch variation, random component
-             (1|r|ID),                        ## within-patch individual (co)variation
-             family=gaussian)
-
-prior<-c(
-  set_prior("normal(0,1)",class="Intercept"),
-  set_prior("normal(0,1)",class="b"),
-  set_prior("normal(0,1)",class="sd")
-)
-
-mod2=brm(bf_size,
-        data=data,
-        iter=2000,warmup=1000,chains=4,
-        prior=prior,
-        control=list(adapt_delta=0.99,max_treedepth=20),
-        seed=42,
-        backend="cmdstanr")
-
-```
 
 
 
