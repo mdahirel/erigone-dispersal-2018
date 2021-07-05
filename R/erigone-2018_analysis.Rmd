@@ -618,8 +618,7 @@ bf_size<-bf(s_CT_width |mi() ~   ## use in-model imputation
              family=gaussian)
 
 bf_dispersal<-bf(N_rappelling |
-                   subset(size_measurement==1 & 
-                            natural_death_before_dispersal==0) ~ ## data is doubled due to putting size in the "long format"
+                   subset(is.valid_dispersal==1) ~ ## data is doubled due to putting size in the "long format"
                                                  ## we only use one value per individual here, to avoid artificial doubling of N  
                    landscape + 
                    (1|patch)+
@@ -628,7 +627,7 @@ bf_dispersal<-bf(N_rappelling |
                  family=poisson)
 
 bf_devtime<-bf(time_to_maturity | 
-                 subset(size_measurement==1) ~ 
+                 subset(is.valid_maturity==1) ~ 
                  landscape + 
                  obsgap_maturity +              ## we include this as a covariate to control whether obs gaps bias our times
              (1|patch)+
@@ -637,7 +636,7 @@ bf_devtime<-bf(time_to_maturity |
 
 bf_longevity<-bf(adult_longevity|
                    cens(adult_censored) +   ## some individuals were not observed until the end of their natural lifespan (accidental loss/killing or outlived the experiment)
-                   subset(size_measurement==1) ~ 
+                   subset(is.valid_longevity==1) ~ 
                    landscape + 
                    obsgap_longevity +
              (1|patch)+
@@ -647,8 +646,7 @@ bf_longevity<-bf(adult_longevity|
 
 bf_fecundity<-bf(lifetime_fecundity|
                    rate(time_for_repro) + ### we analysed the productivity (N offspring per day available to lay eggs)
-                   subset(time_for_repro>0 & had.mate &  ## so we exclude all unmated spiders and spiders that did not have time to lay eggs
-                            size_measurement==1) ~ 
+                   subset(is.valid_fecundity==1) ~ 
                    landscape + 
              (1|patch)+
                (1|q|MOTHER)+
@@ -680,7 +678,115 @@ we find that most of the syndrome is driven by within-family variation (somethin
 
 
 
+### the correlation tables
 
+
+```{r}
+summary_mod_pop <- mod_pop %>%
+  posterior_samples() %>%
+  select(starts_with(c("b_"))) %>%
+  pivot_longer(everything()) %>%
+  group_by(name) %>%
+  mean_hdi()
+
+summary_mod_pop
+
+summary_mod <- mod %>%
+  posterior_samples() %>%
+  select(starts_with(c("b_", "sd_", "cor_ID", "sigma"))) %>%
+  pivot_longer(everything()) %>%
+  group_by(name) %>%
+  mean_hdi() 
+
+summary_mod %>% 
+  print(n=Inf)
+
+## let's look at the Beta coeffs:
+summary_mod %>% 
+  filter(substr(name,1,2)=="b_")
+
+
+summary_mod2 <- mod2 %>%
+  posterior_samples() %>%
+  select(starts_with(c("b_", "sd_", "cor_ID","cor_MOTHER", "sigma"))) %>%
+  pivot_longer(everything()) %>%
+  group_by(name) %>%
+  mean_hdi() 
+
+summary_mod2 %>% 
+  print(n=Inf)
+
+## let's look at the Beta coeffs:
+summary_mod2 %>% 
+  filter(substr(name,1,2)=="b_")
+```
+
+
+```{r}
+table_cor_fullIND<-summary_mod %>% 
+  mutate(value = paste(round(value,2)," [", round(.lower,2),"; ",round(.upper,2),"]",sep="")) %>% 
+  filter(str_detect(name,"cor_ID")==TRUE) %>% 
+  mutate(response1 = case_when(
+    str_detect(name,"cor_ID__adultlongevity") ~ "Adult longevity",
+    str_detect(name, "cor_ID__lifetimefecundity") ~ "Fecundity",
+    str_detect(name, "cor_ID__Nrappelling") ~ "Dispersal",
+    str_detect(name,"cor_ID__timetomaturity") ~ "Time to maturity",
+    str_detect(name,"cor_ID__sCTwidth") ~ "Body size"),
+         response2 = case_when(
+    str_detect(name,"adultlongevity_Intercept$") ~ "Adult longevity",
+    str_detect(name, "lifetimefecundity_Intercept$") ~ "Fecundity",
+    str_detect(name, "Nrappelling_Intercept$") ~ "Dispersal",
+    str_detect(name,"timetomaturity_Intercept$") ~ "Time to maturity",
+    str_detect(name,"sCTwidth_Intercept$") ~ "Body size"),
+  ) %>% 
+  select(response1,response2,value) 
+
+
+
+table_cor_MOTHER<-summary_mod2 %>% 
+  mutate(value = paste(round(value,2)," [", round(.lower,2),"; ",round(.upper,2),"]",sep="")) %>% 
+  filter(str_detect(name,"cor_MOTHER")==TRUE) %>% 
+  mutate(response1 = case_when(
+    str_detect(name,"cor_MOTHER__adultlongevity") ~ "Adult longevity",
+    str_detect(name, "cor_MOTHER__lifetimefecundity") ~ "Fecundity",
+    str_detect(name, "cor_MOTHER__Nrappelling") ~ "Dispersal",
+    str_detect(name,"cor_MOTHER__timetomaturity") ~ "Time to maturity",
+    str_detect(name,"cor_MOTHER__sCTwidth") ~ "Body size"),
+         response2 = case_when(
+    str_detect(name,"adultlongevity_Intercept$") ~ "Adult longevity",
+    str_detect(name, "lifetimefecundity_Intercept$") ~ "Fecundity",
+    str_detect(name, "Nrappelling_Intercept$") ~ "Dispersal",
+    str_detect(name,"timetomaturity_Intercept$") ~ "Time to maturity",
+    str_detect(name,"sCTwidth_Intercept$") ~ "Body size"),
+  ) %>% 
+  select(response1,response2,value) 
+
+table_cor_ID<-summary_mod2 %>% 
+  mutate(value = paste(round(value,2)," [", round(.lower,2),"; ",round(.upper,2),"]",sep="")) %>% 
+  filter(str_detect(name,"cor_ID")==TRUE) %>% 
+  mutate(response1 = case_when(
+    str_detect(name,"cor_ID__adultlongevity") ~ "Adult longevity",
+    str_detect(name, "cor_ID__lifetimefecundity") ~ "Fecundity",
+    str_detect(name, "cor_ID__Nrappelling") ~ "Dispersal",
+    str_detect(name,"cor_ID__timetomaturity") ~ "Time to maturity",
+    str_detect(name,"cor_ID__sCTwidth") ~ "Body size"),
+         response2 = case_when(
+    str_detect(name,"adultlongevity_Intercept$") ~ "Adult longevity",
+    str_detect(name, "lifetimefecundity_Intercept$") ~ "Fecundity",
+    str_detect(name, "Nrappelling_Intercept$") ~ "Dispersal",
+    str_detect(name,"timetomaturity_Intercept$") ~ "Time to maturity",
+    str_detect(name,"sCTwidth_Intercept$") ~ "Body size"),
+  ) %>% 
+  select(response1,response2,value) 
+
+##first multivar
+table_cor_fullIND
+
+## partitioned, second multivar
+table_cor_MOTHER
+
+table_cor_ID
+```
 
 
 
