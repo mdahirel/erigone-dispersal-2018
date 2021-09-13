@@ -60,9 +60,9 @@ let's load the main data:
 ```{r load-raw-datafiles}
 ## Load raw datasets
 data_main <- read_csv(here("data","erigone2018_females.csv"),
-                      col_types = cols(sex=col_character())) %>%  ##only females "F", if not given, will parse as logical
+                      col_types = cols(sex=col_character())) %>%  
+  ##only females "F", so if col_types not given explicitly, "sex" column is parsed as logical
             filter(generation > 0) # we only keep lab-born spiders for this analysis
-## should do better, use date of birth
 
 ###NOTE to round sizes to nearest 0.1mm, with clear indication that raw-raw data are "more precise" but that's just artifact from 
 ## measurement software
@@ -159,42 +159,7 @@ plot_1b <- ggplot(data = patches_updated) +
   theme(legend.position = "bottom"))
 ```
 
-now something for the supplementary that tells us how much habitat there is 1000m aroun deach sampled site
-```{r}
-## we create a sf with only favourable patches
-favourable=patches %>% 
-  filter(plant=="puccinellia_dominant")
-## we make a buffer
-buffers1000=st_buffer(points_updated,dist=1000)
 
-sum_areas=st_intersection(st_make_valid(favourable),buffers1000) %>% 
-  mutate(area=st_area(geom)) %>% 
-  group_by(name) %>% 
-  summarise(area=sum(area,na.rm = TRUE)) %>% 
-  st_drop_geometry() %>% 
-  select(patch=name,area)
-## a warning here that may need to be checked
-
-habitat_avail=left_join(sites,sum_areas) %>% 
-  filter(is_habitat=="y") %>% 
-  mutate(percent_area=100*as.numeric(area)/(pi*1000*1000)) %>% 
-  mutate(landscape=fct_relevel(landscape,"west",after=0))
-##just reordering so that west=left in plots
-
-habitat_avail %>% 
-  group_by(landscape) %>% 
-  summarise(mean=mean(percent_area),
-            min=min(percent_area),
-            max=max(percent_area)
-            )
-
-habitat_avail %>% 
-  ggplot()+
-  geom_jitter(aes(landscape,percent_area),position=position_jitter(width=0.1))+
-  scale_y_continuous("")+
-  ggtitle("Percentage of area in a 1000m radius around sampling site occupied by *Puccinellia*-dominated meadows")+
-  theme_bw()
-```
 
 
 

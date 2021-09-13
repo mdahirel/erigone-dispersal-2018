@@ -1,0 +1,364 @@
+---
+title: "Supplementary Material for \"Dispersal syndrome and landscape fragmentation in the salt-marsh specialist spider *Erigone longipalpis*\""
+author: Maxime Dahirel, Marie Wullschleger, Tristan Berry, Solène Croci, Julien Pétillon
+output: pdf_document
+editor_options:
+  chunk_output_type: console
+header-includes:
+  - \usepackage[left]{lineno}
+  - \linenumbers
+  - \renewcommand\linenumberfont{\normalfont\bfseries\small}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, eval = TRUE, message = FALSE, warning = FALSE)
+```
+
+```{r load-packages}
+library(arm)
+library(matrixStats)
+
+## spatial stuff
+#library(ggmap) #still needed?? not sure
+library(ggspatial)
+library(osmdata)
+library(sf)
+
+## pedigree stuff (still needed??)
+library(nadiv)
+
+library(cmdstanr) ## Stan backend
+library(brms) ## the interface we are using
+library(tidyverse)
+library(bayesplot)
+library(tidybayes)
+library(ggtext)
+library(patchwork) #plotting
+library(lubridate) ## conflict with here
+
+library(here)
+
+options(mc.cores = 4)
+```
+
+
+# Supplementary 1: % of habitat in neighbourhood of patches
+
+something something
+
+```{r}
+sites <- read_csv(here("data","erigone2018_sites.csv"))
+
+map_points<-st_read(here("data","erigone2018_GISlayers.gpkg"),
+        layer="sampling_sites",
+        quiet=TRUE)
+
+map_patches<-st_read(here("data","erigone2018_GISlayers.gpkg"),
+        layer="habitat_type",
+        quiet=TRUE)
+```
+
+now something for the supplementary that tells us how much habitat there is 1000m aroun deach sampled site
+```{r}
+## we create a sf with only favourable patches
+favourable=map_patches %>% 
+  filter(plant=="puccinellia_dominant")
+
+buffers1000=st_buffer(map_points,dist=1000)
+
+sum_areas=st_intersection(st_make_valid(favourable),buffers1000) %>% 
+  mutate(area=st_area(geom)) %>% 
+  group_by(name) %>% 
+  summarise(area=sum(area,na.rm = TRUE)) %>% 
+  st_drop_geometry() %>% 
+  select(patch=name,area)
+## a warning here that may need to be checked
+
+habitat_avail=left_join(sites,sum_areas) %>% 
+  filter(is_habitat=="y") %>% 
+  mutate(percent_area=100*as.numeric(area)/(pi*1000*1000)) %>% 
+  mutate(landscape=fct_relevel(landscape,"west",after=0))
+##just reordering so that west=left in plots
+
+#habitat_avail %>% 
+#  group_by(landscape) %>% 
+#  summarise(mean=mean(percent_area),
+#            min=min(percent_area),
+#            max=max(percent_area)
+#            )
+
+habitat_avail %>% 
+  ggplot()+
+  geom_jitter(aes(landscape,percent_area),position=position_jitter(width=0.1))+
+  scale_y_continuous(" % of area in a 1000m radius occupied by *Puccinellia*-dominated meadows")+
+  theme_bw()+
+  theme(axis.title.y=element_markdown())
+```
+
+# Supplementary 2: correlation between number of spider caught and number of spiders in lab
+
+```{r}
+read_csv(here("data","erigone2018_females.csv"),
+                      col_types = cols(sex=col_character())) %>%  
+  ##only females "F", so if col_types not given explicitly, "sex" column is parsed as logical
+  mutate(wild=generation ==0) %>%
+  group_by(wild, patch) %>% 
+  count() %>% 
+  ungroup() %>% 
+  mutate(wild=paste0("wild_",wild)) %>% 
+  pivot_wider(names_from=wild,values_from=n) %>% 
+  mutate(wild_FALSE=replace_na(wild_FALSE,0)) %>% 
+  ggplot()+
+  geom_point(aes(wild_TRUE/sum(wild_TRUE),wild_FALSE/sum(wild_FALSE)),size=2)+
+  geom_abline(intercept=0,slope=1,lty=2)+
+  scale_x_continuous("proportion of all wild females coming from patch")+
+  scale_y_continuous("proportion of all lab-born females descending from patch")+
+  theme_bw()
+
+```
+
+
+# Supplementary 3: formal description of models
+
+## Spider abundance
+
+The number of spiders $N_{p}$ caught in patch $p$ was analysed using the following model:
+$$
+N_{p} \sim \mathrm{Poisson}(\lambda_{[N]} \times t_{p}),
+$$
+$$
+\log(\lambda_{[N]})= \beta_{0[N]} + \beta_{1[N]} \times x_{p},
+$$
+with $t_p$ being an offset corresponding to the patch-specific sampling effort (in person-hours), and $x_p$ a binary variable denoting the landscape to which the patch $p$ belongs (0: the western, more continuous landscape; 1: the eastern, more fragmented landscape). We used weakly informative priors as suggested by <!--REF TO ADD-->, namely $\mathrm{Normal}(0,1)$ for both the intercept $\beta_{0}$ and the landscape effect $\beta_{1}$.
+
+## Spider phenotype
+
+Let $M_{i,p}$, $D_{i,p}$, $F_{i,p}$, $L_{i,p}$ be the *recorded* ages at maturity, dispersal propensity (number of rappelling attempts), fecundity and adult longevity of individual $i$ whose (grand)mother was caught in patch $p$. In addition, let $S_{i,p,o}$ be the observation/measure $o$ of individual $i$'s body size (here cephalothorax width), *after* standardisation to mean 0 and SD 1. Then we can assume these traits are distributed as follows:
+
+$$
+S_{i,p,o} \sim \mathrm{Normal}(\mu_{i,p},\sigma_r),
+$$
+$$
+M_{i,p} \sim \mathrm{Poisson}(\lambda_{[M]i,p}),
+$$
+$$
+D_{i,p} \sim \mathrm{Poisson}(\lambda_{[D]i,p}),
+$$
+$$
+F_{i,p} \sim \mathrm{Poisson}(\lambda_{[F]i,p} \times d_{i,p}),
+$$
+
+where $d_{i,p}$ is an offset based on the number of potential egg-laying days this individual was observed, and
+
+$$
+L_{i,p}|C_{i,p} =0 \sim \mathrm{Poisson}(\lambda_{[L]i,p}),
+$$
+$$
+L_{i,p}|C_{i,p} =1 \sim \mathrm{Poisson\mbox{-}CCDF}(\lambda_{[L]i,p}),
+$$
+where $C_{i,p}$ is a censoring indicator = 0 if natural death was recorded during the experiment, or = 1 if individuals outlived the experiment or died accidentally.<!--FIND BETTER WAY TO NOTE CENSORSHIP??-->
+
+The models for the corresponding $\mu$ and $\lambda$ are all pretty similar to each other:
+$$
+\mu_{i,p}=\beta_{0[S]} + \beta_{1[S]} \times x_{p} + \alpha_{[S]p} + \gamma_{[S]i},
+$$
+$$
+\log(\lambda_{[M]i,p})=\beta_{0[M]} + \beta_{1[M]} \times x_{p} + \beta_{2[M]} \times y_{[M]p} + \alpha_{[M]p} + \gamma_{[M]i},
+$$
+$$
+\log(\lambda_{[D]i,p})=\beta_{0[D]} + \beta_{1[D]} \times x_{p} + \alpha_{[D]p} + \gamma_{[D]i},
+$$
+$$
+\log(\lambda_{[F]i,p})=\beta_{0[F]} + \beta_{1[F]} \times x_{p} + \alpha_{[F]p} + \gamma_{[F]i},
+$$
+$$
+\log(\lambda_{[L]i,p})=\beta_{0[L]} + \beta_{1[L]} \times x_{p} + \beta_{2[L]} \times y_{[L]p} + \alpha_{[L]p} + \gamma_{[L]i},
+$$
+with $y$ a binary variable denoting whether the time-to-event response (time to maturity or longevity) is based on records with gaps (i.e. maturity recorded after a week-end) and thus potentially biased. The random effects of patch of origin and individual identity are denoted by $\alpha$ and $\gamma$ respectively. These random effects are distributed as follows:
+
+$$
+\alpha_{[S]p} \sim \mathrm{Normal}(0,\sigma_{\alpha[S]}),
+$$
+$$
+\alpha_{[M]p} \sim \mathrm{Normal}(0,\sigma_{\alpha[M]}),
+$$
+$$
+\alpha_{[D]p} \sim \mathrm{Normal}(0,\sigma_{\alpha[D]}),
+$$
+$$
+\alpha_{[F]p} \sim \mathrm{Normal}(0,\sigma_{\alpha[F]}),
+$$
+$$
+\alpha_{[L]p} \sim \mathrm{Normal}(0,\sigma_{\alpha[L]}),
+$$
+
+$$
+\begin{bmatrix} \gamma_{[S]i} \\ \gamma_{[M]i} \\ \gamma_{[D]i} \\ \gamma_{[F]i} \\ \gamma_{[L]i} \end{bmatrix} 
+\sim 
+\textrm{MVNormal}
+\begin{pmatrix}
+\begin{bmatrix} 0 \\ 0 \\ 0 \\ 0 \\ 0  \end{bmatrix},
+\boldsymbol{\Omega}
+\end{pmatrix},
+$$
+where $\boldsymbol{\Omega}$ is the individual-level covariance matrix, which can be decomposed into its constituent standard deviations and correlation matrix $\boldsymbol{R}$ as follows:
+$$
+\boldsymbol{\Omega} = 
+\begin{bmatrix}
+\sigma_{\gamma[S]} & 0 & 0 & 0 & 0\\
+0 & \sigma_{\gamma[M]} & 0 & 0 & 0\\
+0 & 0 & \sigma_{\gamma[D]} & 0 & 0\\
+0 & 0 & 0 & \sigma_{\gamma[F]} & 0\\
+0 & 0 & 0 & 0 & \sigma_{\gamma[L]}
+\end{bmatrix}
+\boldsymbol{R}
+\begin{bmatrix}
+\sigma_{\gamma[S]} & 0 & 0 & 0 & 0\\
+0 & \sigma_{\gamma[M]} & 0 & 0 & 0\\
+0 & 0 & \sigma_{\gamma[D]} & 0 & 0\\
+0 & 0 & 0 & \sigma_{\gamma[F]} & 0\\
+0 & 0 & 0 & 0 & \sigma_{\gamma[L]}
+\end{bmatrix}.
+$$
+
+Priors for fixed effects $\beta$ are the same as in the abundance model ($\mathrm{Normal}(0,1)$) except for the intercepts of the time to maturity and longevity submodels. For these, priors were shifted to $\mathrm{Normal}(3.4,1)$ based on knowledge that typical development times and adult longevity in *Erigone* are on the order of 30 days (i.e. $\simeq \exp(3.4)$) <!--add REF-->. We used $\mathrm{Half-Normal(0,1)}$ priors for all standard deviations $\sigma$ (including the residual SD $\sigma_{r}$ for the size submodel), and a $\mathrm{LKJCorr}(2)$ prior for the correlation matrix $R$ of individual-level random effects.
+
+## Splitting among- and within-family correlations
+
+In a second time, we refitted the above model, this time splitting the individual-level variation into its within- and among-family components. The model is largely as above, with two exceptions:
+
+- first, individuals $i$ are not only indexed by their patch of origin $p$, but also by their mother $m$ (so the dispersal propensity $D_{i,p}$ is now written $D_{i,m,p}$)
+
+- second, the individual-level random effects $\gamma$, and the corresponding covariance, are decomposed into a sum of family-level random effects $\eta$ and the remaining within-family individual effects $\nu$ as follows:
+
+$$
+\gamma_{[S]i,m,p} =  \eta_{[S]m,p} + \nu_{[S]i,m,p},
+$$
+$$
+\gamma_{[M]i,m,p} =  \eta_{[M]m,p} + \nu_{[M]i,m,p},
+$$
+$$
+\gamma_{[D]i,m,p} =  \eta_{[D]m,p} + \nu_{[D]i,m,p},
+$$
+$$
+\gamma_{[F]i,m,p} =  \eta_{[F]m,p} + \nu_{[F]i,m,p},
+$$
+$$
+\gamma_{[L]i,m,p} =  \eta_{[L]m,p} + \nu_{[L]i,m,p},
+$$
+
+$$
+\begin{bmatrix} \eta_{[S]i} \\ \eta_{[M]i} \\ \eta_{[D]i} \\ \eta_{[F]i} \\ \eta_{[L]i} \end{bmatrix} 
+\sim 
+\textrm{MVNormal}
+\begin{pmatrix}
+\begin{bmatrix} 0 \\ 0 \\ 0 \\ 0 \\ 0  \end{bmatrix},
+\boldsymbol{\Omega_{\eta}}
+\end{pmatrix},
+$$
+$$
+\boldsymbol{\Omega_{\eta}} = 
+\begin{bmatrix}
+\sigma_{\eta[S]} & 0 & 0 & 0 & 0\\
+0 & \sigma_{\eta[M]} & 0 & 0 & 0\\
+0 & 0 & \sigma_{\eta[D]} & 0 & 0\\
+0 & 0 & 0 & \sigma_{\eta[F]} & 0\\
+0 & 0 & 0 & 0 & \sigma_{\eta[L]}
+\end{bmatrix}
+\boldsymbol{R_{\eta}}
+\begin{bmatrix}
+\sigma_{\eta[S]} & 0 & 0 & 0 & 0\\
+0 & \sigma_{\eta[M]} & 0 & 0 & 0\\
+0 & 0 & \sigma_{\eta[D]} & 0 & 0\\
+0 & 0 & 0 & \sigma_{\eta[F]} & 0\\
+0 & 0 & 0 & 0 & \sigma_{\eta[L]}
+\end{bmatrix},
+$$
+$$
+\begin{bmatrix} \nu_{[S]i} \\ \nu_{[M]i} \\ \nu_{[D]i} \\ \nu_{[F]i} \\ \nu_{[L]i} \end{bmatrix} 
+\sim 
+\textrm{MVNormal}
+\begin{pmatrix}
+\begin{bmatrix} 0 \\ 0 \\ 0 \\ 0 \\ 0  \end{bmatrix},
+\boldsymbol{\Omega_{\nu}}
+\end{pmatrix},
+$$
+$$
+\boldsymbol{\Omega_{\nu}} = 
+\begin{bmatrix}
+\sigma_{\nu[S]} & 0 & 0 & 0 & 0\\
+0 & \sigma_{\nu[M]} & 0 & 0 & 0\\
+0 & 0 & \sigma_{\nu[D]} & 0 & 0\\
+0 & 0 & 0 & \sigma_{\nu[F]} & 0\\
+0 & 0 & 0 & 0 & \sigma_{\nu[L]}
+\end{bmatrix}
+\boldsymbol{R_{\nu}}
+\begin{bmatrix}
+\sigma_{\nu[S]} & 0 & 0 & 0 & 0\\
+0 & \sigma_{\nu[M]} & 0 & 0 & 0\\
+0 & 0 & \sigma_{\nu[D]} & 0 & 0\\
+0 & 0 & 0 & \sigma_{\nu[F]} & 0\\
+0 & 0 & 0 & 0 & \sigma_{\nu[L]}
+\end{bmatrix}.
+$$
+
+# Supplementary 4: abundance results with all patches even the bad ones
+
+something something
+```{r, results="hide"}
+sites2<-sites %>% 
+  mutate(landscape=fct_relevel(landscape,"west",after=0))
+  
+mod_pop_suppl=brm(
+  N_adult_females|rate(person_hours_on_patch)~
+    landscape,family=poisson,
+  data=sites2,
+  prior=c(
+    set_prior("normal(0,1)",class="Intercept"),
+    set_prior("normal(0,1)",class="b")
+  ),
+        iter=6000,warmup=3000,chains=4,
+        seed=42,
+        backend="cmdstanr"
+)
+```
+
+
+```{r}
+newdata_pop<-sites2 %>% 
+  select(landscape) %>% 
+  distinct() %>% 
+  mutate(person_hours_on_patch=1) %>% 
+  add_fitted_draws(mod_pop_suppl)
+  
+plot2<-ggplot()+
+  stat_eye(data=newdata_pop,aes(landscape,.value),
+           slab_alpha=0.5,
+           fill="#238443",
+           .width=c(0.001,0.95),
+           point_interval="mean_hdi")+
+  geom_jitter(data=sites2,aes(landscape,N_adult_females/person_hours_on_patch),
+              position=position_jitter(width=0.2),pch=21,size=2,fill="white")+
+  scale_x_discrete("landscape of origin")+
+  scale_y_continuous("Population density (female *E. longipalpis* per person-hour)")+
+  theme_bw()+
+  theme(axis.title.y = element_markdown())
+
+plot2
+```
+
+# Supplementary 5: observation day biases? none
+
+something something
+
+# Supplementary 6: phenotypic traits, but for the split variance model
+
+something something
+
+# Supplementary 7: table 1a, but using the split model
+
+something something
+
+# Supplementary 8: full posteriors
+
+something something, may end up not including it (just need to delete a sentence in legend of Table1)
