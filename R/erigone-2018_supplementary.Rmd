@@ -98,6 +98,9 @@ habitat_avail %>%
 # Supplementary 2: correlation between number of spider caught and number of spiders in lab
 
 ```{r}
+
+### ADD THE MALES TOO!!!!!!!!!!!!!!!
+
 read_csv(here("data","erigone2018_females.csv"),
                       col_types = cols(sex=col_character())) %>%  
   ##only females "F", so if col_types not given explicitly, "sex" column is parsed as logical

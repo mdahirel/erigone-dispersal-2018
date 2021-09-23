@@ -45,6 +45,7 @@ library(cmdstanr) ## Stan backend
 library(brms) ## the interface we are using
 library(tidyverse)
 library(bayesplot)
+library(ggdist)
 library(tidybayes)
 library(ggtext)
 library(patchwork) #plotting
@@ -102,6 +103,7 @@ coastline<-st_read(here("data","erigone2018_GISlayers.gpkg"),
         layer="coastline")
 ```
 
+this the code chunk for fig 1, ie the map: (to clean)
 
 ```{r}
 
@@ -160,8 +162,7 @@ plot_1b <- ggplot(data = patches_updated) +
 ```
 
 
-
-
+this is some quality checks for the Methods
 
 ```{r}
 read_csv(here("data","erigone2018_females.csv"),
@@ -183,9 +184,7 @@ read_csv(here("data","weather_data","pontorson_meteonet_2018.csv")) %>%
 ```
 
 
-
-
-
+more checks
 
 ```{r}
 pedigree %>% filter(generation>0) %>% group_by(sex) %>% count()
@@ -254,7 +253,7 @@ our choice of life history metrics is inspired (but not 100% identical) to Healy
 We add to that
 
 - body size information
-- dispersal information (presence/absence of dispersal-relate dbehaviours; rappelling frequencies) . Note: the original data collection plan also included information about latency to tiptoe and number of tiptoe events even if they were not followed by rappelling, but due to miscommunication on my side, the two data collectors (me and MW) did not agree on how to count tiptoes in these columns (should we count all tiptoes vs only tiptoes that were not followed by rappelling). As a result data entered in these columns is meaningless and not used or reproduced here
+- dispersal information (presence/absence of dispersal-related behaviours; rappelling frequencies).
 
 ```{r data-wrangling-1}
 fecundity <- data_clutches %>% 
@@ -264,16 +263,9 @@ fecundity <- data_clutches %>%
             N_cocoons_hatched=sum(Cocoon_hatched))
 
 
-development_density <- data_clutches %>% 
-  select(MOTHER=ID,
-         date_egg=date_laying,
-         density=N_spiderlings,
-         clutch_order=clutchID)
-
 data <- left_join(data_main,fecundity) %>%
   mutate(animal = ID) %>% 
   left_join(pedigree) %>% 
-  left_join(development_density) %>% 
   mutate(lifetime_fecundity=replace_na(lifetime_fecundity,0), 
          ###individuals with no record in the fecundity are not NA, they failed to reproduce
          ### but in some cases it may be beccause no mating; we'll account for that in analysis
@@ -340,7 +332,7 @@ data<-data %>%
 
 ```
 
-
+more checks for methods
 ```{r}
 mean(data$date_mating-data$date_maturity,na.rm=TRUE)
 sd(data$date_mating-data$date_maturity,na.rm=TRUE)
@@ -361,15 +353,21 @@ range(as.numeric(data$date_mating-data$date_maturity),na.rm=TRUE)
 let's analyse population densities
 
 ```{r}
-sites2<-sites %>% 
-  mutate(landscape=fct_relevel(landscape,"west",after=0)) %>% 
-  filter(is_habitat=="y")
-  
+sites<-sites %>% 
+  mutate(landscape=fct_relevel(landscape,"west",after=0))
+```
 
-mod_pop=brm(
+the main model, includig only "true" habitat
+```{r}
+if (file.exists(here("R_output", "mod_popsize.Rdata"))) {
+  # this if-else statement is avoid re-fitting a model if there is already one existing in R_output
+  # to override, re-run the model and re-save manually by selecting only the relevant code lines (or delete the Rdata object before relaunching this code chunk)
+  load(here("R_output", "mod_popsize.Rdata"))
+} else {
+mod_pop <- brm(
   N_adult_females|rate(person_hours_on_patch)~
     landscape,family=poisson,
-  data=sites2,
+  data=subset(sites, is_habitat=="y"),
   prior=c(
     set_prior("normal(0,1)",class="Intercept"),
     set_prior("normal(0,1)",class="b")
@@ -378,25 +376,50 @@ mod_pop=brm(
         seed=42,
         backend="cmdstanr"
 )
+  save(list = c("mod_pop"), file = here("R_output", "mod_popsize.Rdata"))
+}
+```
+
+```{r}
+if (file.exists(here("R_output", "mod_popsize_suppl.Rdata"))) {
+  # this if-else statement is avoid re-fitting a model if there is already one existing in R_output
+  # to override, re-run the model and re-save manually by selecting only the relevant code lines (or delete the Rdata object before relaunching this code chunk)
+  load(here("R_output", "mod_popsize_suppl.Rdata"))
+} else {
+mod_pop_suppl <- brm(
+  N_adult_females|rate(person_hours_on_patch)~
+    landscape,family=poisson,
+  data=sites,
+  prior=c(
+    set_prior("normal(0,1)",class="Intercept"),
+    set_prior("normal(0,1)",class="b")
+  ),
+        iter=6000,warmup=3000,chains=4,
+        seed=42,
+        backend="cmdstanr"
+)
+  save(list = c("mod_pop_suppl"), file = here("R_output", "mod_popsize_suppl.Rdata"))
+}
 ```
 
 
 a draft of the figure
 
 ```{r}
-newdata_pop<-sites2 %>% 
+newdata_pop<-sites %>% 
+  filter(is_habitat=="y") %>% 
   select(landscape) %>% 
   distinct() %>% 
   mutate(person_hours_on_patch=1) %>% 
-  add_fitted_draws(mod_pop)
+  add_epred_draws(mod_pop)
   
 plot2<-ggplot()+
-  stat_eye(data=newdata_pop,aes(landscape,.value),
+  stat_eye(data=newdata_pop,aes(landscape,.epred),
            slab_alpha=0.5,
            fill="#238443",
            .width=c(0.001,0.95),
            point_interval="mean_hdi")+
-  geom_jitter(data=sites2,aes(landscape,N_adult_females/person_hours_on_patch),
+  geom_jitter(data=sites %>% filter(is_habitat=="y"),aes(landscape,N_adult_females/person_hours_on_patch),
               position=position_jitter(width=0.2),pch=21,size=2,fill="white")+
   scale_x_discrete("landscape of origin")+
   scale_y_continuous("Population density (female *E. longipalpis* per person-hour)")+
@@ -409,8 +432,8 @@ plot2
 
 first a model for the phenotypic correlation:
 
+we notes the "valid" points for each variable (for the subset)(mostly involve avoiding duplicates for non size variables, but not only)
 ```{r}
-
 data$is.valid_dispersal=as.numeric(data$size_measurement==1 & 
                             data$natural_death_before_dispersal==0)
 
@@ -421,7 +444,10 @@ data$is.valid_fecundity=as.numeric(data$time_for_repro>0 &
                             data$size_measurement==1)
 
 data$is.valid_longevity=as.numeric(data$size_measurement==1)
+```
 
+
+```{r}
 bf_size<-bf(s_CT_width |mi() ~   ## use in-model imputation
               landscape +                     ## interpatch variation, fixed component
              (1|patch)+                       ## interpatch variation, random component
@@ -458,9 +484,10 @@ bf_fecundity<-bf(lifetime_fecundity|
                    landscape + 
              (1|patch)+
              (1|r|ID),family=poisson)
+```
 
-###move it to productivity with rate(time) and eliminate the delay_egg predictor (much more streamlined)
 
+```{r}
 prior<-c(
   set_prior("normal(0,1)",class="Intercept",resp=c("Nrappelling","sCTwidth","lifetimefecundity")),
   set_prior("normal(3.4,1)",class="Intercept",resp=c("timetomaturity","adultlongevity")),
@@ -470,14 +497,26 @@ prior<-c(
   set_prior("normal(0,1)",class="sd",resp=c("Nrappelling","timetomaturity","lifetimefecundity","adultlongevity","sCTwidth")),
   set_prior("lkj(3)",class="cor")
 )
+```
 
-mod=brm(mvbf(bf_dispersal+bf_devtime+bf_fecundity+bf_longevity+bf_size),
+
+```{r}
+if (file.exists(here("R_output", "multivar_mod_1.Rdata"))) {
+  # this if-else statement is avoid re-fitting a model if there is already one existing in R_output
+  # to override, re-run the model and re-save manually by selecting only the relevant code lines (or delete the Rdata object before relaunching this code chunk)
+  load(here("R_output", "multivar_mod_1.Rdata"))
+} else {
+  
+mmod1=brm(mvbf(bf_dispersal+bf_devtime+bf_fecundity+bf_longevity+bf_size),
         data=data,
         iter=6000,warmup=3000,chains=4,
         prior=prior,
         control=list(adapt_delta=0.99,max_treedepth=15),
         seed=42,
         backend="cmdstanr")
+
+  save(list = c("mmod1"), file = here("R_output", "multivar_mod_1.Rdata"))
+}
 ```
 
 
@@ -488,12 +527,12 @@ newdata_maturity<-data %>%
   select(landscape) %>% 
   distinct() %>% 
   mutate(is.valid_maturity=1, obsgap_maturity="no") %>% 
-  add_fitted_draws(mod,resp="timetomaturity",re_formula = NA)
+  add_epred_draws(mmod1,resp="timetomaturity",re_formula = NA)
 
 plot3_a<-ggplot()+
   geom_boxplot(data=subset(data,is.valid_maturity==1),
                aes(landscape,time_to_maturity, group=patch),col="grey50")+
-  stat_eye(data=newdata_maturity,aes(landscape,.value),
+  stat_eye(data=newdata_maturity,aes(landscape,.epred),
            slab_alpha=0.5,
            fill="#238443",
            .width=c(0.001,0.95),
@@ -504,13 +543,13 @@ plot3_a<-ggplot()+
 newdata_size<-data %>% 
   select(landscape) %>% 
   distinct() %>%  
-  add_fitted_draws(mod,resp="sCTwidth",re_formula = NA) %>% 
-  mutate(.value=(.value*sd(data$CT_width,na.rm=TRUE))+mean(data$CT_width,na.rm=TRUE))
+  add_epred_draws(mmod1,resp="sCTwidth",re_formula = NA) %>% 
+  mutate(.epred=(.epred*sd(data$CT_width,na.rm=TRUE))+mean(data$CT_width,na.rm=TRUE))
 # we back transform the predictions from scaled values to observed
 
 plot3_b<-ggplot()+
   geom_boxplot(data=data,aes(landscape,CT_width, group=patch),col="grey50")+
-  stat_eye(data=newdata_size,aes(landscape,.value),
+  stat_eye(data=newdata_size,aes(landscape,.epred),
            slab_alpha=0.5,
            fill="#238443",
            .width=c(0.001,0.95),
@@ -522,12 +561,12 @@ newdata_dispersal<-data %>%
   select(landscape) %>% 
   distinct() %>% 
   mutate(is.valid_dispersal=1) %>% 
-  add_fitted_draws(mod,resp="Nrappelling",re_formula = NA)
+  add_epred_draws(mmod1,resp="Nrappelling",re_formula = NA)
 
 plot3_c<-ggplot()+
   geom_boxplot(data=subset(data,is.valid_dispersal==1),
                aes(landscape,N_rappelling, group=patch),col="grey50")+
-  stat_eye(data=newdata_dispersal,aes(landscape,.value),
+  stat_eye(data=newdata_dispersal,aes(landscape,.epred),
            slab_alpha=0.5,
            fill="#238443",
            .width=c(0.001,0.95),
@@ -539,12 +578,12 @@ newdata_fecundity<-data %>%
   select(landscape) %>% 
   distinct() %>% 
   mutate(is.valid_fecundity=1,time_for_repro=1) %>% 
-  add_fitted_draws(mod,resp="lifetimefecundity",re_formula = NA)
+  add_epred_draws(mmod1,resp="lifetimefecundity",re_formula = NA)
 
 plot3_d<-ggplot()+
   geom_boxplot(data=subset(data,is.valid_fecundity==1),
                aes(landscape,lifetime_fecundity/time_for_repro, group=patch),col="grey50")+
-  stat_eye(data=newdata_fecundity,aes(landscape,.value),
+  stat_eye(data=newdata_fecundity,aes(landscape,.epred),
            slab_alpha=0.5,
            fill="#238443",
            .width=c(0.001,0.95),
@@ -557,12 +596,12 @@ newdata_longevity<-data %>%
   select(landscape) %>% 
   distinct() %>% 
   mutate(is.valid_longevity=1,obsgap_longevity="no") %>% 
-  add_fitted_draws(mod,resp="adultlongevity",re_formula = NA)
+  add_epred_draws(mmod1,resp="adultlongevity",re_formula = NA)
 
 plot3_e<-ggplot()+
   geom_boxplot(data=subset(data,is.valid_longevity==1),
                aes(landscape,adult_longevity, group=patch),col="grey50")+
-  stat_eye(data=newdata_longevity,aes(landscape,.value),
+  stat_eye(data=newdata_longevity,aes(landscape,.epred),
            slab_alpha=0.5,
            fill="#238443",
            .width=c(0.001,0.95),
@@ -586,17 +625,14 @@ then a model where we split this into "relatedness + common environment" and res
 we cannot go further and include father info since it is missing for G1, and we cannot assume that wild caught females only mated with one male (which would allow us to add these phantom males to the pedigree) since there is indication that erigone females mate multiple times (anecdote in de meester bonte 2010 among others,see also Comparative  study  of  courtship  and  copulation  in  fiveOedothorax species)
 
 ```{r}
-
-
-             
-bf_size<-bf(s_CT_width |mi() ~   ## use in-model imputation
+bf_size2<-bf(s_CT_width |mi() ~   ## use in-model imputation
               landscape +                     ## interpatch variation, fixed component
              (1|patch)+                       ## interpatch variation, random component
               (1|q|MOTHER)+
              (1|r|ID),                        ## within-patch individual (co)variation
              family=gaussian)
 
-bf_dispersal<-bf(N_rappelling |
+bf_dispersal2<-bf(N_rappelling |
                    subset(is.valid_dispersal==1) ~ ## data is doubled due to putting size in the "long format"
                                                  ## we only use one value per individual here, to avoid artificial doubling of N  
                    landscape + 
@@ -605,7 +641,7 @@ bf_dispersal<-bf(N_rappelling |
                    (1|r|ID),
                  family=poisson)
 
-bf_devtime<-bf(time_to_maturity | 
+bf_devtime2<-bf(time_to_maturity | 
                  subset(is.valid_maturity==1) ~ 
                  landscape + 
                  obsgap_maturity +              ## we include this as a covariate to control whether obs gaps bias our times
@@ -613,7 +649,7 @@ bf_devtime<-bf(time_to_maturity |
                (1|q|MOTHER)+
              (1|r|ID),family=poisson)
 
-bf_longevity<-bf(adult_longevity|
+bf_longevity2<-bf(adult_longevity|
                    cens(adult_censored) +   ## some individuals were not observed until the end of their natural lifespan (accidental loss/killing or outlived the experiment)
                    subset(is.valid_longevity==1) ~ 
                    landscape + 
@@ -623,7 +659,7 @@ bf_longevity<-bf(adult_longevity|
              (1|r|ID),family=poisson)
 
 
-bf_fecundity<-bf(lifetime_fecundity|
+bf_fecundity2<-bf(lifetime_fecundity|
                    rate(time_for_repro) + ### we analysed the productivity (N offspring per day available to lay eggs)
                    subset(is.valid_fecundity==1) ~ 
                    landscape + 
@@ -631,19 +667,17 @@ bf_fecundity<-bf(lifetime_fecundity|
                (1|q|MOTHER)+
              (1|r|ID),family=poisson)
 
-###move it to productivity with rate(time) and eliminate the delay_egg predictor (much more streamlined)
+```
 
-prior<-c(
-  set_prior("normal(0,1)",class="Intercept",resp=c("Nrappelling","sCTwidth","lifetimefecundity")),
-  set_prior("normal(3.4,1)",class="Intercept",resp=c("timetomaturity","adultlongevity")),
-  ### bonte pnas and duffey (longipalpis) suggest a month (exp(3.4)) is a good ballpark prior
-  set_prior("normal(0,1)",class="b",resp=c("Nrappelling","lifetimefecundity","sCTwidth")),
-  set_prior("normal(0,1)",class="b",resp=c("timetomaturity","adultlongevity")),
-  set_prior("normal(0,1)",class="sd",resp=c("Nrappelling","timetomaturity","lifetimefecundity","adultlongevity","sCTwidth")),
-  set_prior("lkj(3)",class="cor")
-)
 
-mod2=brm(mvbf(bf_dispersal+bf_devtime+bf_fecundity+bf_longevity+bf_size),
+```{r}
+if (file.exists(here("R_output", "multivar_mod_2.Rdata"))) {
+  # this if-else statement is avoid re-fitting a model if there is already one existing in R_output
+  # to override, re-run the model and re-save manually by selecting only the relevant code lines (or delete the Rdata object before relaunching this code chunk)
+  load(here("R_output", "multivar_mod_2.Rdata"))
+} else {
+  
+mmod2=brm(mvbf(bf_dispersal2+bf_devtime2+bf_fecundity2+bf_longevity2+bf_size2),
         data=data,
         iter=6000,warmup=3000,chains=4,
         prior=prior,
@@ -651,6 +685,9 @@ mod2=brm(mvbf(bf_dispersal+bf_devtime+bf_fecundity+bf_longevity+bf_size),
         seed=42,
         backend="cmdstanr")
 
+
+  save(list = c("mmod2"), file = here("R_output", "multivar_mod_2.Rdata"))
+}
 ```
 
 we find that most of the syndrome is driven by within-family variation (something that would not have been visible from the attempt at doing an animal model)
