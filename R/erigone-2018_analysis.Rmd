@@ -699,7 +699,7 @@ we find that most of the syndrome is driven by within-family variation (somethin
 
 ```{r}
 summary_mod_pop <- mod_pop %>%
-  posterior_samples() %>%
+  as_draws_df() %>%
   select(starts_with(c("b_"))) %>%
   pivot_longer(everything()) %>%
   group_by(name) %>%
@@ -707,39 +707,39 @@ summary_mod_pop <- mod_pop %>%
 
 summary_mod_pop
 
-summary_mod <- mod %>%
-  posterior_samples() %>%
+summary_mmod1 <- mmod1 %>%
+  as_draws_df() %>%
   select(starts_with(c("b_", "sd_", "cor_ID", "sigma"))) %>%
   pivot_longer(everything()) %>%
   group_by(name) %>%
   mean_hdi() 
 
-summary_mod %>% 
+summary_mmod1 %>% 
   print(n=Inf)
 
 ## let's look at the Beta coeffs:
-summary_mod %>% 
+summary_mmod1 %>% 
   filter(substr(name,1,2)=="b_")
 
 
-summary_mod2 <- mod2 %>%
-  posterior_samples() %>%
+summary_mmod2 <- mmod2 %>%
+  as_draws_df() %>%
   select(starts_with(c("b_", "sd_", "cor_ID","cor_MOTHER", "sigma"))) %>%
   pivot_longer(everything()) %>%
   group_by(name) %>%
   mean_hdi() 
 
-summary_mod2 %>% 
+summary_mmod2 %>% 
   print(n=Inf)
 
 ## let's look at the Beta coeffs:
-summary_mod2 %>% 
+summary_mmod2 %>% 
   filter(substr(name,1,2)=="b_")
 ```
 
 
 ```{r}
-table_cor_fullIND<-summary_mod %>% 
+table_cor_fullIND<-summary_mmod1 %>% 
   mutate(value = paste(round(value,2)," [", round(.lower,2),"; ",round(.upper,2),"]",sep="")) %>% 
   filter(str_detect(name,"cor_ID")==TRUE) %>% 
   mutate(response1 = case_when(
@@ -759,7 +759,7 @@ table_cor_fullIND<-summary_mod %>%
 
 
 
-table_cor_MOTHER<-summary_mod2 %>% 
+table_cor_MOTHER<-summary_mmod2 %>% 
   mutate(value = paste(round(value,2)," [", round(.lower,2),"; ",round(.upper,2),"]",sep="")) %>% 
   filter(str_detect(name,"cor_MOTHER")==TRUE) %>% 
   mutate(response1 = case_when(
@@ -777,7 +777,7 @@ table_cor_MOTHER<-summary_mod2 %>%
   ) %>% 
   select(response1,response2,value) 
 
-table_cor_ID<-summary_mod2 %>% 
+table_cor_ID<-summary_mmod2 %>% 
   mutate(value = paste(round(value,2)," [", round(.lower,2),"; ",round(.upper,2),"]",sep="")) %>% 
   filter(str_detect(name,"cor_ID")==TRUE) %>% 
   mutate(response1 = case_when(
@@ -805,7 +805,51 @@ table_cor_ID
 ```
 
 
+### in prep for Supplementary 6: table 1a, but using the split model
 
+```{r}
+cov_mother<- VarCorr(mmod2,summary=FALSE)$MOTHER$cov
+cov_ID <- VarCorr(mmod2,summary=FALSE)$ID$cov
+
+cov_mother
+cov_ID
+cov_mother+cov_ID
+
+test<- tibble(.iteration= 1:12000) %>%
+  mutate(cor = map(
+    .x = .iteration,
+    .f = function(iter = .x, source = cov_mother+cov_ID) {
+      return(source[iter, , ] %>% cov2cor())
+    }
+  ))
+
+
+sum_cor<-tibble(y=NA,
+       ymin=NA,
+       ymax=NA,
+       .width=NA,
+       .point=NA,
+       .interval=NA,
+       resp1=NA,
+       resp2=NA)
+
+for(i in 1:5){
+  for(j in 1:5){
+    
+result<-map(.x=test$cor,
+    .f=function(cor=.x,x=i,y=j){return(cor[x,y])}) %>% 
+  unlist() %>% 
+  mean_hdi() %>% 
+  mutate(resp1=row.names(test$cor[[1]])[i],
+         resp2=colnames(test$cor[[1]])[j])
+
+sum_cor<-add_row(sum_cor,result)
+  }
+}
+
+print(sum_cor,n=Inf)
+
+```
 
 
 

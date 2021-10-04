@@ -41,14 +41,122 @@ library(here)
 options(mc.cores = 4)
 ```
 
+```{r load-raw-datafiles}
+## Load raw datasets
+data_main <- read_csv(here("data","erigone2018_females.csv"),
+                      col_types = cols(sex=col_character())) %>%  
+  ##only females "F", so if col_types not given explicitly, "sex" column is parsed as logical
+            filter(generation > 0) # we only keep lab-born spiders for this analysis
 
-# Supplementary 1: % of habitat in neighbourhood of patches
+###NOTE to round sizes to nearest 0.1mm, with clear indication that raw-raw data are "more precise" but that's just artifact from 
+## measurement software
 
-something something
 
-```{r}
+data_mothers <- read_csv(here("data","erigone2018_females.csv"),
+                      col_types = cols(sex=col_character())) %>%
+            filter(generation <2) %>% 
+  select(MOTHER= ID,
+         CT_length1_mom = CT_length1,
+         CT_length2_mom = CT_length1,
+         CT_width1_mom = CT_width1,
+         CT_width2_mom = CT_width2
+         )
+
+data_clutches <- read_csv(here("data","erigone2018_cocoons.csv"))
+
+pedigree <- read_csv(here("data","erigone2018_pedigree.csv"))
+
 sites <- read_csv(here("data","erigone2018_sites.csv"))
 
+pairings <- read_csv(here("data","erigone2018_pairings.csv"))
+
+## see later for environmental data, and male data
+```
+<!--start of a block of recreation of data, could be best to put up a write_csv in main code-->
+```{r}
+fecundity <- data_clutches %>% 
+  group_by(ID) %>% 
+  summarise(lifetime_fecundity=sum(N_spiderlings),
+            N_cocoons=sum(N_cocoons),
+            N_cocoons_hatched=sum(Cocoon_hatched))
+
+
+data <- left_join(data_main,fecundity) %>%
+  mutate(animal = ID) %>% 
+  left_join(pedigree) %>% 
+  mutate(lifetime_fecundity=replace_na(lifetime_fecundity,0), 
+         ###individuals with no record in the fecundity are not NA, they failed to reproduce
+         ### but in some cases it may be beccause no mating; we'll account for that in analysis
+         N_cocoons=replace_na(N_cocoons,0),
+         N_cocoons_hatched=replace_na(N_cocoons_hatched,0),
+         N_rappelling=replace_na(N_rappelling,0)
+         ## we do the same for rappelling, a few NA because died before dispersal
+         ## but for some downstream methods we need something with no NAs
+         ## so dummy variables
+         ) %>% 
+  mutate(time_to_maturity = (ymd(date_maturity)-ymd(date_hatching)) %>%  as.numeric(),
+         adult_longevity = (ymd(date_death)-ymd(date_maturity)) %>%  as.numeric()
+         ) %>% 
+  mutate(generation = factor(generation),
+         clutchID = paste(MOTHER,"-",as.character(date_egg),sep="")###wild are assumed to not be direct siblings, all count as their own clutch
+  ) %>% 
+  mutate(obsgap_maturity=case_when(date_maturity=="2018-05-22" | date_egg=="2018-05-22" ~ "yes",
+                             wday(date_maturity,week_start=1)==1 | wday(date_egg,week_start=1)==1 ~ "yes",
+                             date_maturity=="2018-05-02" | date_egg== "2018-05-02" |
+                               date_maturity=="2018-05-09" | date_egg=="2018-05-09" ~ "yes",
+                             T~ "no")) %>% 
+  mutate(obsgap_longevity=case_when(date_maturity=="2018-05-22" | date_death=="2018-05-22" ~ "yes",
+                             wday(date_maturity,week_start=1)==1 | wday(date_death,week_start=1)==1 ~ "yes",
+                             date_maturity=="2018-05-02" | date_death== "2018-05-02" |
+                               date_maturity=="2018-05-09" | date_death=="2018-05-09" ~ "yes",
+                             T~ "no"))
+
+## we add variables that say whether or not one of the two observations that govern phase duration
+## were made right after a gap in observation (WE, holdays, other)
+## leading to potential bias
+data$adult_censored <- (data$outlived_experiment==TRUE | data$accidental_death==TRUE)
+data$time_for_repro=as.numeric(ymd(data$date_death)-ymd(data$date_mating))
+data$had.mate<- (is.na(data$date_mating)==FALSE)
+
+temp_length<- data %>%
+  select(ID,CT_length1,CT_length2) %>% 
+  pivot_longer(cols=c(CT_length1,CT_length2),
+               names_to = "size_measurement",
+               names_prefix="CT_length",
+               values_to="CT_length") 
+
+temp_width<- data %>%
+  select(ID,CT_width1,CT_width2) %>% 
+  pivot_longer(cols=c(CT_width1,CT_width2),
+               names_to = "size_measurement",
+               names_prefix="CT_width",
+               values_to="CT_width") 
+
+temp_size=left_join(temp_length,temp_width)
+
+data<-data %>% 
+  select(-c(CT_length1,CT_length2,CT_width1,CT_width2)) %>% 
+  left_join(temp_size) %>% 
+  mutate(s_CT_width=scale(CT_width)[,1],
+         s_CT_length=scale(CT_length)[,1]) %>% 
+  mutate(landscape=fct_relevel(landscape,"west",after=0))
+
+data$is.valid_dispersal=as.numeric(data$size_measurement==1 & 
+                            data$natural_death_before_dispersal==0)
+
+data$is.valid_maturity=as.numeric(data$size_measurement==1)
+
+data$is.valid_fecundity=as.numeric(data$time_for_repro>0 & 
+                                     data$had.mate ==TRUE &  ## so we exclude all unmated spiders and spiders that did not have time to lay eggs
+                            data$size_measurement==1)
+
+data$is.valid_longevity=as.numeric(data$size_measurement==1)
+```
+<!--end of "data" recreation block-->
+
+# Supplementary Material 1. Difference in habitat availability between the two focal "landscapes"
+
+```{r}
 map_points<-st_read(here("data","erigone2018_GISlayers.gpkg"),
         layer="sampling_sites",
         quiet=TRUE)
@@ -58,7 +166,6 @@ map_patches<-st_read(here("data","erigone2018_GISlayers.gpkg"),
         quiet=TRUE)
 ```
 
-now something for the supplementary that tells us how much habitat there is 1000m aroun deach sampled site
 ```{r}
 ## we create a sf with only favourable patches
 favourable=map_patches %>% 
@@ -90,18 +197,17 @@ habitat_avail=left_join(sites,sum_areas) %>%
 habitat_avail %>% 
   ggplot()+
   geom_jitter(aes(landscape,percent_area),position=position_jitter(width=0.1))+
-  scale_y_continuous(" % of area in a 1000m radius occupied by *Puccinellia*-dominated meadows")+
+  scale_y_continuous(" % of favourable habitat within a 1000m radius")+
   theme_bw()+
   theme(axis.title.y=element_markdown())
 ```
 
-# Supplementary 2: correlation between number of spider caught and number of spiders in lab
+**Supplementary Figure S1.1.** Proportion of land and sea cover occupied by favourable habitat (i.e. *Puccinellia maritima*-dominated lawns) within a 1000m radius of each sampling site, as a function of landscape.
+
+# Supplementary Material 2. Relationship between the numbers of lab-born spiders and wild-caught spiders sourced from a patch
 
 ```{r}
-
-### ADD THE MALES TOO!!!!!!!!!!!!!!!
-
-read_csv(here("data","erigone2018_females.csv"),
+count_females <- read_csv(here("data","erigone2018_females.csv"),
                       col_types = cols(sex=col_character())) %>%  
   ##only females "F", so if col_types not given explicitly, "sex" column is parsed as logical
   mutate(wild=generation ==0) %>%
@@ -111,17 +217,31 @@ read_csv(here("data","erigone2018_females.csv"),
   mutate(wild=paste0("wild_",wild)) %>% 
   pivot_wider(names_from=wild,values_from=n) %>% 
   mutate(wild_FALSE=replace_na(wild_FALSE,0)) %>% 
+  rename(n_females_lab = wild_FALSE, n_females_wild = wild_TRUE)
+
+count_males <- read_csv(here("data","erigone2018_males.csv"),
+                      col_types = cols(sex=col_character())) %>%  
+  filter(generation>0) %>%
+  group_by(patch) %>% 
+  count() %>% 
+  rename(n_males_lab=n)
+
+count_spiders <- left_join(count_females,count_males) %>% 
+  mutate(n_males_lab=replace_na(n_males_lab,0))
+
+count_spiders %>% 
   ggplot()+
-  geom_point(aes(wild_TRUE/sum(wild_TRUE),wild_FALSE/sum(wild_FALSE)),size=2)+
+  geom_point(aes(n_females_wild/sum(n_females_wild),(n_males_lab+n_females_lab)/sum(n_females_lab+n_males_lab)),size=2)+
   geom_abline(intercept=0,slope=1,lty=2)+
   scale_x_continuous("proportion of all wild females coming from patch")+
-  scale_y_continuous("proportion of all lab-born females descending from patch")+
+  scale_y_continuous("proportion of all lab-born adults descending from patch")+
   theme_bw()
 
 ```
 
+**Figure S2.1.** Relationship between the relative number of female spiders caught in a patch and the corresponding number of lab-born adults kept. The dashed line corresponds to y = x. Note that the same pattern is found whether the variable on the y-axis is "all adult spiders in the lab" or only the female ones.
 
-# Supplementary 3: formal description of models
+# Supplementary Material 3. Detailed description of statistical models
 
 ## Spider abundance
 
@@ -224,8 +344,8 @@ $$
 \end{bmatrix}.
 $$
 
-Priors for fixed effects $\beta$ are the same as in the abundance model ($\mathrm{Normal}(0,1)$) except for the intercepts of the time to maturity and longevity submodels. For these, priors were shifted to $\mathrm{Normal}(3.4,1)$ based on knowledge that typical development times and adult longevity in *Erigone* are on the order of 30 days (i.e. $\simeq \exp(3.4)$) <!--add REF-->. We used $\mathrm{Half-Normal(0,1)}$ priors for all standard deviations $\sigma$ (including the residual SD $\sigma_{r}$ for the size submodel), and a $\mathrm{LKJCorr}(2)$ prior for the correlation matrix $R$ of individual-level random effects.
-
+Priors for fixed effects $\beta$ are the same as in the abundance model ($\mathrm{Normal}(0,1)$) except for the intercepts of the time to maturity and longevity submodels. For these, priors were shifted to $\mathrm{Normal}(3.4,1)$ based on knowledge that typical development times and adult longevity in *Erigone* are on the order of 30 days (i.e. $\simeq \exp(3.4)$) <!--add REF-->. We used $\mathrm{Half-Normal(0,1)}$ priors for all standard deviations $\sigma$ (including the residual SD $\sigma_{r}$ for the size submodel), and a $\mathrm{LKJCorr}(3)$ prior for the correlation matrix $R$ of individual-level random effects. Note that our LKJ prior is narrower than the one used in McElreath (2021)<!--add REF-->($\mathrm{LKJCorr}(2)$); in effect this penalizes against strong correlations (i.e. against our hypotheses of interest) unless support from the data is substantial.
+ 
 ## Splitting among- and within-family correlations
 
 In a second time, we refitted the above model, this time splitting the individual-level variation into its within- and among-family components. The model is largely as above, with two exceptions:
@@ -305,9 +425,8 @@ $$
 \end{bmatrix}.
 $$
 
-# Supplementary 4: abundance results with all patches even the bad ones
+# Supplementary Material 4. Effect of landscape of origin on abundance, revisited
 
-something something
 ```{r, results="hide"}
 sites2<-sites %>% 
   mutate(landscape=fct_relevel(landscape,"west",after=0))
@@ -350,18 +469,119 @@ plot2<-ggplot()+
 plot2
 ```
 
-# Supplementary 5: observation day biases? none
+**Figure S4.1.** Effect of landscape of origin on the number of spiders found per patch (weighted by sampling effort). White dots corresponding to observed data are shown alongside model posteriors.Contrary to main text **Fig. 2**, all visited patches are included here, even those where *Puccinellia maritima* is not dominant.
 
-something something
 
-# Supplementary 6: phenotypic traits, but for the split variance model
+# Supplementary Material 5. Effect of landscape of origin on phenotypic traits, revisited
 
-something something
+```{r}
+load(here("R_output", "multivar_mod_2.Rdata"))
 
-# Supplementary 7: table 1a, but using the split model
+newdata_maturity<-data %>% 
+  select(landscape) %>% 
+  distinct() %>% 
+  mutate(is.valid_maturity=1, obsgap_maturity="no") %>% 
+  add_epred_draws(mmod2,resp="timetomaturity",re_formula = NA)
 
-something something
+plot3_a<-ggplot()+
+  geom_boxplot(data=subset(data,is.valid_maturity==1),
+               aes(landscape,time_to_maturity, group=patch),col="grey50")+
+  stat_eye(data=newdata_maturity,aes(landscape,.epred),
+           slab_alpha=0.5,
+           fill="#238443",
+           .width=c(0.001,0.95),
+           point_interval="mean_hdi")+
+  scale_x_discrete("")+
+  scale_y_continuous("Age at maturity (days)")
 
-# Supplementary 8: full posteriors
+newdata_size<-data %>% 
+  select(landscape) %>% 
+  distinct() %>%  
+  add_epred_draws(mmod2,resp="sCTwidth",re_formula = NA) %>% 
+  mutate(.epred=(.epred*sd(data$CT_width,na.rm=TRUE))+mean(data$CT_width,na.rm=TRUE))
+# we back transform the predictions from scaled values to observed
 
-something something, may end up not including it (just need to delete a sentence in legend of Table1)
+plot3_b<-ggplot()+
+  geom_boxplot(data=data,aes(landscape,CT_width, group=patch),col="grey50")+
+  stat_eye(data=newdata_size,aes(landscape,.epred),
+           slab_alpha=0.5,
+           fill="#238443",
+           .width=c(0.001,0.95),
+           point_interval="mean_hdi")+
+  scale_x_discrete("")+
+  scale_y_continuous("Adult size (mm)")
+
+newdata_dispersal<-data %>% 
+  select(landscape) %>% 
+  distinct() %>% 
+  mutate(is.valid_dispersal=1) %>% 
+  add_epred_draws(mmod2,resp="Nrappelling",re_formula = NA)
+
+plot3_c<-ggplot()+
+  geom_boxplot(data=subset(data,is.valid_dispersal==1),
+               aes(landscape,N_rappelling, group=patch),col="grey50")+
+  stat_eye(data=newdata_dispersal,aes(landscape,.epred),
+           slab_alpha=0.5,
+           fill="#238443",
+           .width=c(0.001,0.95),
+           point_interval="mean_hdi")+
+  scale_x_discrete("")+
+  scale_y_continuous("Dispersal (# rappelling attempts)")
+
+newdata_fecundity<-data %>% 
+  select(landscape) %>% 
+  distinct() %>% 
+  mutate(is.valid_fecundity=1,time_for_repro=1) %>% 
+  add_epred_draws(mmod2,resp="lifetimefecundity",re_formula = NA)
+
+plot3_d<-ggplot()+
+  geom_boxplot(data=subset(data,is.valid_fecundity==1),
+               aes(landscape,lifetime_fecundity/time_for_repro, group=patch),col="grey50")+
+  stat_eye(data=newdata_fecundity,aes(landscape,.epred),
+           slab_alpha=0.5,
+           fill="#238443",
+           .width=c(0.001,0.95),
+           point_interval="mean_hdi")+
+  scale_x_discrete("landscape of origin")+
+  scale_y_continuous("Fecundity (# offspring/day)")
+
+
+newdata_longevity<-data %>% 
+  select(landscape) %>% 
+  distinct() %>% 
+  mutate(is.valid_longevity=1,obsgap_longevity="no") %>% 
+  add_epred_draws(mmod2,resp="adultlongevity",re_formula = NA)
+
+plot3_e<-ggplot()+
+  geom_boxplot(data=subset(data,is.valid_longevity==1),
+               aes(landscape,adult_longevity, group=patch),col="grey50")+
+  stat_eye(data=newdata_longevity,aes(landscape,.epred),
+           slab_alpha=0.5,
+           fill="#238443",
+           .width=c(0.001,0.95),
+           point_interval="mean_hdi")+
+  scale_x_discrete("")+
+  scale_y_continuous("Adult longevity (days)")
+
+
+layout <- "
+AB#
+CDE
+"
+plot3_a+plot3_b+plot3_c+plot3_d+plot3_e + 
+  plot_layout(design = layout) & theme_bw()
+```
+
+**Figure S5.1.** Phenotypic traits of lab-born spiders as a function of landscape of origin. Observed data are displayed as boxplots (one boxplot per patch of origin), alongside model posteriors. Predictions are based on the model where individual trait co-variance **is** partitioned between among- and within-family components; see main text **Fig. 3** for a similar figure based on the model where individual-level variation is **not* partitioned.
+
+# Supplementary Material 6: overall within-patch, individual-level correlations among traits, based on the "split variance" model
+
+**Supplementary Table S6.1.** Means and 95% Higher Posterior Density intervals for the overall individual-level correlations among traits, based on the model where individual-level (co-)variance is split into among- and within-family levels (compare with **Table 1a** in the main text, which is based on the model where individual-level variation is **not** split into its among- and within-family components).
+<!--see main code for the source info for this table-->
+
+|  |Time to maturity| Body size| Dispersal| Fecundity |
+|-----|-----|-----|-----|-----|
+|Body size| -0.36 [-0.52; -0.20] |                     |                     |                     |
+| Dispersal| -0.28 [-0.45; -0.09] | 0.12 [-0.02; 0.24]   |                     |                     |
+| Fecundity| -0.28 [-0.46; -0.10] | 0.27 [0.11; 0.43]   | 0.14 [0.02; 0.28]   |                     |
+| Adult longevity| 0.01 [-0.16; 0.19]   | -0.23 [-0.36; -0.09] | 0.11 [-0.03; 0.26]  | -0.05 [-0.21; 0.11] |
