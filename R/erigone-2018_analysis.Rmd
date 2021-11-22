@@ -97,7 +97,8 @@ points<-st_read(here("data","erigone2018_GISlayers.gpkg"),
         layer="sampling_sites")
 
 patches<-st_read(here("data","erigone2018_GISlayers.gpkg"),
-        layer="habitat_type")
+        layer="habitat_type") %>% 
+  st_make_valid() ##possible problem of invalid geometry
 
 coastline<-st_read(here("data","erigone2018_GISlayers.gpkg"),
         layer="coastline")
@@ -125,7 +126,7 @@ points_updated <- points %>%
 ### a general map of western europe
 plot_1a <- ggplot() +
   geom_sf(data=coastline)+
-    geom_sf(data=points_updated[1,],pch=19,size=5)+
+    geom_sf(data=points_updated[1,],pch=19,size=3)+
   coord_sf(xlim=c(-10.854,11.074),ylim=c(41.925,55.653))+
   theme_bw()+
   theme(
@@ -138,7 +139,8 @@ plot_1b <- ggplot(data = patches_updated) +
     geom_sf(aes(fill = `habitat type`,col=`habitat type`)) + 
     geom_sf(data=points_updated,aes(pch=`*E. longipalpis* found?`),size=3)+
     scale_fill_manual(values=c("#238443","#addd8e","#ffffe5"))+
-    scale_colour_manual(values=c("#238443","#addd8e","#ffffe5"))+
+    scale_colour_manual(values=c("#238443","#addd8e","#ffffe5"),
+                        guide=guide_legend(override.aes = list(col="black")))+
   ##colors based on the YlGn palette in ColorBrewer
     scale_shape_manual(values=c(21,19))+
       annotation_scale(location = "br") + # ggspatial scale on bottom left
@@ -157,8 +159,10 @@ plot_1b <- ggplot(data = patches_updated) +
 
 
 ((plot_1a+plot_1b +
-  plot_layout(guides = 'collect'))&
-  theme(legend.position = "bottom"))
+  plot_layout(widths = c(1, 4)))&
+  theme(legend.position = "bottom",
+        legend.box="vertical", 
+        legend.box.just = 1))
 ```
 
 

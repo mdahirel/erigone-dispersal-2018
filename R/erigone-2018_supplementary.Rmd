@@ -14,6 +14,7 @@ header-includes:
 knitr::opts_chunk$set(echo = FALSE, eval = TRUE, message = FALSE, warning = FALSE)
 ```
 <!--note to self to check the jitter on figures to be sure that 4 or 5 patches west, 3 patches east in the "only main patches" config-->
+<!--note to self to ADD the REFS TO ADD FFS-->
 
 ```{r load-packages}
 library(arm)
@@ -240,7 +241,7 @@ count_spiders %>%
 
 ```
 
-**Figure S2.1.** Relationship between the relative number of female spiders caught in a patch and the corresponding number of lab-born adults kept. The dashed line corresponds to y = x. Note that the same pattern is found whether the variable on the y-axis is "all adult spiders in the lab" or only the female ones.
+**Figure S2.1.** Relationship between the relative number of female spiders caught in a patch and the corresponding number of lab-born adults kept. The dashed line corresponds to y = x. Note that a similar pattern is found whether the variable on the y-axis is "all lab-born adult spiders" or only the female lab-born spiders.
 
 # Supplementary Material 3. Detailed description of statistical models
 
