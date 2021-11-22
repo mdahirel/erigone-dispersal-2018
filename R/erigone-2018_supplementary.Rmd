@@ -13,6 +13,7 @@ header-includes:
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE, eval = TRUE, message = FALSE, warning = FALSE)
 ```
+<!--note to self to check the jitter on figures to be sure that 4 or 5 patches west, 3 patches east in the "only main patches" config-->
 
 ```{r load-packages}
 library(arm)
@@ -572,7 +573,7 @@ plot3_a+plot3_b+plot3_c+plot3_d+plot3_e +
   plot_layout(design = layout) & theme_bw()
 ```
 
-**Figure S5.1.** Phenotypic traits of lab-born spiders as a function of landscape of origin. Observed data are displayed as boxplots (one boxplot per patch of origin), alongside model posteriors. Predictions are based on the model where individual trait co-variance **is** partitioned between among- and within-family components; see main text **Fig. 3** for a similar figure based on the model where individual-level variation is **not* partitioned.
+**Figure S5.1.** Phenotypic traits of lab-born spiders as a function of landscape of origin. Observed data are displayed as boxplots (one boxplot per patch of origin), alongside model posteriors. Predictions are based on the model where individual trait co-variance **is** partitioned between among- and within-family components; see main text **Fig. 3** for a similar figure based on the model where individual-level variation is **not** partitioned.
 
 # Supplementary Material 6: overall within-patch, individual-level correlations among traits, based on the "split variance" model
 
