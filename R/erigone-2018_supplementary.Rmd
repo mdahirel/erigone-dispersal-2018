@@ -2,6 +2,8 @@
 title: "Supplementary Material for \"Dispersal syndrome and landscape fragmentation in the salt-marsh specialist spider *Erigone longipalpis*\""
 author: Maxime Dahirel, Marie Wullschleger, Tristan Berry, Solène Croci, Julien Pétillon
 output: pdf_document
+bibliography: references.bib 
+csl: council-of-science-editors-author-date.csl
 editor_options:
   chunk_output_type: console
 header-includes:
@@ -21,10 +23,12 @@ library(arm)
 library(matrixStats)
 
 ## spatial stuff
+library(raster)
 #library(ggmap) #still needed?? not sure
 library(ggspatial)
 library(osmdata)
 library(sf)
+library(landscapemetrics)
 
 ## pedigree stuff (still needed??)
 library(nadiv)
@@ -156,55 +160,154 @@ data$is.valid_longevity=as.numeric(data$size_measurement==1)
 ```
 <!--end of "data" recreation block-->
 
-# Supplementary Material 1. Difference in habitat availability between the two focal "landscapes"
+# Supplementary Material 1. Difference in landscape metrics between western and eastern sides
 
 ```{r}
-map_points<-st_read(here("data","erigone2018_GISlayers.gpkg"),
-        layer="sampling_sites",
-        quiet=TRUE)
 
-map_patches<-st_read(here("data","erigone2018_GISlayers.gpkg"),
-        layer="habitat_type",
-        quiet=TRUE)
+map_points<-st_read(here("data","erigone2018_GISlayers.gpkg"),
+                    layer="sampling_sites",
+                    quiet=TRUE)
+
+sites <- read_csv(here("data","erigone2018_sites.csv"))
+
+raster_pucci <- raster(here("data","erigone2018_raster_pucci_dominant.tif"))
+
+raster_pucci<-extend(raster_pucci,y=200,value=2)
+##we extend the raster in the north south direction to ensure buffers don't go beyond the landscape
+## we can do it safely, north is sea and south is agricultural land, no favourable habitat there
+## so value = 2
+points_remapped=map_points %>% 
+  st_transform(st_crs("EPSG:3035"))
 ```
 
 ```{r}
-## we create a sf with only favourable patches
-favourable=map_patches %>% 
-  filter(plant=="puccinellia_dominant")
+lmetrics=function(distance,raster_source,sampled,shape,what){
+test=sample_lsm(raster_source,
+           y=sampled,plot_id=sampled$name,
+           what=what,
+           shape=shape, ## shape circle may cause problems for clumpy see,https://github.com/r-spatialecology/landscapemetrics/issues/232
+           size=distance)%>% 
+  filter(class==1) %>% 
+  select(-c(level,class)) %>% 
+  mutate(patch=plot_id) %>% 
+  pivot_wider(names_from=metric)
 
-buffers1000=st_buffer(map_points,dist=1000)
+return(test)
 
-sum_areas=st_intersection(st_make_valid(favourable),buffers1000) %>% 
-  mutate(area=st_area(geom)) %>% 
-  group_by(name) %>% 
-  summarise(area=sum(area,na.rm = TRUE)) %>% 
-  st_drop_geometry() %>% 
-  select(patch=name,area)
-## a warning here that may need to be checked
+}
+```
 
-habitat_avail=left_join(sites,sum_areas) %>% 
+```{r}
+test=tibble(dist=c(1:20)*100,index=1:20)  %>% 
+  group_by(dist) %>% 
+  nest(dist=dist) %>% 
+  mutate(pland=map(.x=dist,
+                   .f=~.x$dist %>% 
+                     lmetrics(distance=., 
+                              raster_source=raster_pucci,
+                              sampled=points_remapped,
+                              what="lsm_c_pland",shape="circle")),
+         psize=map(.x=dist,
+                   .f=~.x$dist %>% 
+                     lmetrics(distance=., 
+                              raster_source=raster_pucci,
+                              sampled=points_remapped,
+                              what=c("lsm_c_area_mn","lsm_c_gyrate_mn"),shape="circle")),
+         lmetrics=map(.x=dist,
+                      .f=~.x$dist %>% 
+                        lmetrics(distance=., 
+                                 raster_source=raster_pucci,
+                                 sampled=points_remapped,
+                                 what="lsm_c_clumpy",shape="square")))
+##based on tbale 2 in wang MEE if we want metrics independent from habitat loss
+##we can use PAFRAC, the core areas metrics, 
+## prox_cv, econ_am or teci, and clumpy
+#PAFRAC is a nono because too low number of patches, econm_am or teci not relevant because
+## denote edge effects, so need to specify a contrast weight to edge
+## prox_cv is defined at the patch level, so problematic when only one small patch alone in the buffer
+## core areas: my pixels are 10m, my spider 4mm, not sure how to define a edge depth??
+## so seems like clumpy only?? (OK with me)
+
+```
+
+Generally speaking and (mostly) independently of the spatial scale considered, *Puccinellia maritima*-dominated lawns, the favourable habitat for *E. longipalpis*, were more abundant on the western side (**Figure S1.1**) than on the eastern one. Individual meadow patches were also on average bigger (**Figures S1.2 and S1.3**), and *Puccinellia maritima* meadow pixels were typically more aggregated than on the eastern side (based on the Clumpiness Index; **Figure S1.4**). We used the Clumpiness index to examine habitat fragmentation *sensu stricto* because, based on @wangMeasuringHabitatFragmentation2014, it is one of the few commonly available metrics that is mostly independent of habitat abundance.
+
+```{r}
+test %>% 
+  unnest(pland) %>% unnest(dist) %>% left_join(sites) %>% 
+  mutate(landscape=paste("landscape =", landscape)) %>% 
+  mutate(landscape=fct_relevel(factor(landscape),
+                               "landscape = west","landscape = east")) %>% 
   filter(is_habitat=="y") %>% 
-  mutate(percent_area=100*as.numeric(area)/(pi*1000*1000)) %>% 
-  mutate(landscape=fct_relevel(landscape,"west",after=0))
-##just reordering so that west=left in plots
-
-#habitat_avail %>% 
-#  group_by(landscape) %>% 
-#  summarise(mean=mean(percent_area),
-#            min=min(percent_area),
-#            max=max(percent_area)
-#            )
-
-habitat_avail %>% 
   ggplot()+
-  geom_jitter(aes(landscape,percent_area),position=position_jitter(width=0.1))+
-  scale_y_continuous(" % of favourable habitat within a 1000m radius")+
+  geom_line(aes(dist,pland,group=patch,col=landscape))+
+  geom_point(aes(dist,pland,group=patch,col=landscape)) + 
+  scale_x_continuous("distance (buffer radius, m)")+
+  scale_y_continuous(" % of favourable habitat")+
+  scale_color_manual(values=c("#f1a340","#998ec3"),guide="none")+
   theme_bw()+
+  facet_wrap(~landscape)+
   theme(axis.title.y=element_markdown())
 ```
 
-**Supplementary Figure S1.1.** Proportion of land and sea cover occupied by favourable habitat (i.e. *Puccinellia maritima*-dominated lawns) within a 1000m radius of each sampling site, as a function of landscape.
+**Figure S1.1.** Proportion of land and sea cover occupied by favourable habitat (i.e. *Puccinellia maritima*-dominated lawns) within a given radius of each sampling site, as a function of landscape. Each line represents one sampling site where *Erigone longipalpis* were found. Estimates are made using the R package `landscapemetrics` [@hesselbarthLandscapemetricsOpensourceTool2019] on rasters with a pixel size 10 by 10 m.
+
+```{r}
+test %>% 
+  unnest(psize) %>% unnest(dist) %>% left_join(sites) %>% 
+  mutate(landscape=paste("landscape =", landscape)) %>% 
+  mutate(landscape=fct_relevel(factor(landscape),
+                               "landscape = west","landscape = east")) %>% 
+  filter(is_habitat=="y") %>% 
+  ggplot()+
+  geom_line(aes(dist,area_mn,group=patch,col=landscape))+ ##area is estimated in ha
+  geom_point(aes(dist,area_mn,group=patch,col=landscape)) + 
+  scale_x_continuous("distance (buffer radius, m)")+
+  scale_y_continuous("mean patch area (ha)")+
+  scale_color_manual(values=c("#f1a340","#998ec3"),guide="none")+
+  theme_bw()+
+  facet_wrap(~landscape)
+```
+
+**Figure S1.2.** Mean patch area (*Puccinellia maritima*-dominated lawns) as a function of landscape, within circular buffers of varying radius around each sampling site. Each line represents one sampling site where *Erigone longipalpis* were found. Estimates are made using the R package `landscapemetrics` [@hesselbarthLandscapemetricsOpensourceTool2019] on rasters with a pixel size 10 by 10 m. Note that patches may be truncated by the buffer window.
+
+```{r}
+test %>% 
+  unnest(psize) %>% unnest(dist) %>% left_join(sites) %>% 
+  mutate(landscape=paste("landscape =", landscape)) %>% 
+  mutate(landscape=fct_relevel(factor(landscape),
+                               "landscape = west","landscape = east")) %>% 
+  filter(is_habitat=="y") %>% 
+  ggplot()+
+  geom_line(aes(dist,gyrate_mn,group=patch,col=landscape))+ ##area is estimated in ha
+  geom_point(aes(dist,gyrate_mn,group=patch,col=landscape)) + 
+  scale_x_continuous("distance (buffer radius, m)")+
+  scale_y_continuous("average radius of gyration (GYRATE, m)")+
+  scale_color_manual(values=c("#f1a340","#998ec3"),guide="none")+
+  theme_bw()+
+  facet_wrap(~landscape)
+```
+
+**Figure S1.3.** Mean radius of gyration for *Puccinellia maritima*-dominated lawns (i.e. the mean distance between a patch pixel and its corresponding patch centroid) as a function of landscape, within circular buffers of varying radius around each sampling site. Each line represents one sampling site where *Erigone longipalpis* were found. Estimates are made using the R package `landscapemetrics` [@hesselbarthLandscapemetricsOpensourceTool2019] on rasters with a pixel size 10 by 10 m. Note that patches may be truncated by the buffer window.
+
+```{r}
+test %>% 
+  unnest(lmetrics) %>% unnest(dist) %>% left_join(sites) %>% 
+  mutate(landscape=paste("landscape =", landscape)) %>% 
+  mutate(landscape=fct_relevel(factor(landscape),
+                               "landscape = west","landscape = east")) %>% 
+  filter(is_habitat=="y") %>% 
+  ggplot()+
+  geom_line(aes(dist,clumpy,group=patch,col=landscape))+
+  geom_point(aes(dist,clumpy,group=patch,col=landscape)) + 
+  scale_x_continuous("distance (square side length/2, m)")+
+  scale_y_continuous("Clumpiness index (CLUMPY)")+
+  scale_color_manual(values=c("#f1a340","#998ec3"),guide="none")+
+  theme_bw()+
+  facet_wrap(~landscape)
+```
+
+**Figure S1.4.** Clumpiness index of favourable habitat (i.e. *Puccinellia maritima*-dominated lawns) around each sampling site, as a function of landscape. Each line represents one sampling site where *Erigone longipalpis* were found. Contrary to other metrics above, clumpiness indices were calculated on square landscape windows rather than circular buffers, as the latter lead to anomalous behaviour at the window boundary. Estimates are made using the R package `landscapemetrics` [@hesselbarthLandscapemetricsOpensourceTool2019] on rasters with a pixel size 10 by 10 m.
 
 # Supplementary Material 2. Relationship between the numbers of lab-born spiders and wild-caught spiders sourced from a patch
 
@@ -254,7 +357,7 @@ $$
 $$
 \log(\lambda_{[N]})= \beta_{0[N]} + \beta_{1[N]} \times x_{p},
 $$
-with $t_p$ being an offset corresponding to the patch-specific sampling effort (in person-hours), and $x_p$ a binary variable denoting the landscape to which the patch $p$ belongs (0: the western, more continuous landscape; 1: the eastern, more fragmented landscape). We used weakly informative priors as suggested by <!--REF TO ADD-->, namely $\mathrm{Normal}(0,1)$ for both the intercept $\beta_{0}$ and the landscape effect $\beta_{1}$.
+with $t_p$ being an offset corresponding to the patch-specific sampling effort (in person-hours), and $x_p$ a binary variable denoting the landscape to which the patch $p$ belongs (0: the western, more continuous landscape; 1: the eastern, more fragmented landscape). We used weakly informative priors as suggested by @mcelreathStatisticalRethinkingBayesian2020, namely $\mathrm{Normal}(0,1)$ for both the intercept $\beta_{0}$ and the landscape effect $\beta_{1}$.
 
 ## Spider phenotype
 
@@ -346,7 +449,7 @@ $$
 \end{bmatrix}.
 $$
 
-Priors for fixed effects $\beta$ are the same as in the abundance model ($\mathrm{Normal}(0,1)$) except for the intercepts of the time to maturity and longevity submodels. For these, priors were shifted to $\mathrm{Normal}(3.4,1)$ based on knowledge that typical development times and adult longevity in *Erigone* are on the order of 30 days (i.e. $\simeq \exp(3.4)$) <!--add REF-->. We used $\mathrm{Half-Normal(0,1)}$ priors for all standard deviations $\sigma$ (including the residual SD $\sigma_{r}$ for the size submodel), and a $\mathrm{LKJCorr}(3)$ prior for the correlation matrix $R$ of individual-level random effects. Note that our LKJ prior is narrower than the one used in McElreath (2021)<!--add REF-->($\mathrm{LKJCorr}(2)$); in effect this penalizes against strong correlations (i.e. against our hypotheses of interest) unless support from the data is substantial.
+Priors for fixed effects $\beta$ are the same as in the abundance model ($\mathrm{Normal}(0,1)$) except for the intercepts of the time to maturity and longevity submodels. For these, priors were shifted to $\mathrm{Normal}(3.4,1)$ based on knowledge that typical development times and adult longevity in *Erigone* are on the order of 30 days (i.e. $\simeq \exp(3.4)$) [@bonteThermalConditionsJuvenile2008; @mestreFoodStressJuvenile2012]. We used $\mathrm{Half-Normal(0,1)}$ priors for all standard deviations $\sigma$ (including the residual SD $\sigma_{r}$ for the size submodel), and a $\mathrm{LKJCorr}(3)$ prior for the correlation matrix $R$ of individual-level random effects. Note that our LKJ prior is narrower than the one used in @mcelreathStatisticalRethinkingBayesian2020 ($\mathrm{LKJCorr}(2)$); in effect this penalizes against strong correlations (i.e. against our hypotheses of interest) unless support from the data is substantial.
  
 ## Splitting among- and within-family correlations
 
@@ -471,7 +574,7 @@ plot2<-ggplot()+
 plot2
 ```
 
-**Figure S4.1.** Effect of landscape of origin on the number of spiders found per patch (weighted by sampling effort). White dots corresponding to observed data are shown alongside model posteriors.Contrary to main text **Fig. 2**, all visited patches are included here, even those where *Puccinellia maritima* is not dominant.
+**Figure S4.1.** Effect of landscape of origin on the number of spiders found per patch (weighted by sampling effort). White dots corresponding to observed data are shown alongside model posteriors. Contrary to main text **Fig. 2**, all visited patches are included here, even those where *Puccinellia maritima* is not dominant.
 
 
 # Supplementary Material 5. Effect of landscape of origin on phenotypic traits, revisited
@@ -587,3 +690,5 @@ plot3_a+plot3_b+plot3_c+plot3_d+plot3_e +
 | Dispersal| -0.28 [-0.45; -0.09] | 0.12 [-0.02; 0.24]   |                     |                     |
 | Fecundity| -0.28 [-0.46; -0.10] | 0.27 [0.11; 0.43]   | 0.14 [0.02; 0.28]   |                     |
 | Adult longevity| 0.01 [-0.16; 0.19]   | -0.23 [-0.36; -0.09] | 0.11 [-0.03; 0.26]  | -0.05 [-0.21; 0.11] |
+
+# References

@@ -49,6 +49,12 @@ test=tibble(dist=c(1:20)*100,index=1:20)  %>%
                               raster_source=raster_pucci,
                               sampled=points_remapped,
                               what="lsm_c_pland",shape="circle")),
+         psize=map(.x=dist,
+                   .f=~.x$dist %>% 
+                     lmetrics(distance=., 
+                              raster_source=raster_pucci,
+                              sampled=points_remapped,
+                              what=c("lsm_c_area_mn","lsm_c_gyrate_mn"),shape="circle")),
          lmetrics=map(.x=dist,
                       .f=~.x$dist %>% 
                         lmetrics(distance=., 
@@ -81,7 +87,20 @@ test %>%
   facet_wrap(~landscape)+
   theme(axis.title.y=element_markdown())
   
-
+test %>% 
+  unnest(psize) %>% unnest(dist) %>% left_join(sites) %>% 
+  mutate(landscape=paste("landscape =", landscape)) %>% 
+  mutate(landscape=fct_relevel(factor(landscape),
+                               "landscape = west","landscape = east")) %>% 
+  filter(is_habitat=="y") %>% 
+  ggplot()+
+  geom_line(aes(dist,gyrate_mn,group=patch,col=landscape))+ ##area is estimated in ha
+  geom_point(aes(dist,gyrate_mn,group=patch,col=landscape)) + 
+  scale_x_continuous("distance (buffer radius, m)")+
+  scale_y_continuous("average radius of gyration (GYRATE, m)")+
+  scale_color_manual(values=c("#f1a340","#998ec3"),guide="none")+
+  theme_bw()+
+  facet_wrap(~landscape)
 
 test %>% 
   unnest(lmetrics) %>% unnest(dist) %>% left_join(sites) %>% 
@@ -96,8 +115,7 @@ test %>%
   scale_y_continuous("Clumpiness index (CLUMPY)")+
   scale_color_manual(values=c("#f1a340","#998ec3"),guide="none")+
   theme_bw()+
-  facet_wrap(~landscape)+
-  theme(axis.title.y=element_markdown())
+  facet_wrap(~landscape)
 
 ###mention the pixel size in the figure!!!
 

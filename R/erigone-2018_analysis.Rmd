@@ -60,7 +60,7 @@ let's load the main data:
 
 ```{r load-raw-datafiles}
 ## Load raw datasets
-data_main <- read_csv(here("data","erigone2018_females.csv"),
+data_main <- read_csv(here("data","erigone2018_females2.csv"),
                       col_types = cols(sex=col_character())) %>%  
   ##only females "F", so if col_types not given explicitly, "sex" column is parsed as logical
             filter(generation > 0) # we only keep lab-born spiders for this analysis
@@ -275,7 +275,8 @@ data <- left_join(data_main,fecundity) %>%
          ### but in some cases it may be beccause no mating; we'll account for that in analysis
          N_cocoons=replace_na(N_cocoons,0),
          N_cocoons_hatched=replace_na(N_cocoons_hatched,0),
-         N_rappelling=replace_na(N_rappelling,0)
+         N_rappelling=replace_na(N_rappelling,0),
+         N_other_tiptoe=replace_na(N_other_tiptoe,0),
          ## we do the same for rappelling, a few NA because died before dispersal
          ## but for some downstream methods we need something with no NAs
          ## so dummy variables
@@ -458,7 +459,7 @@ bf_size<-bf(s_CT_width |mi() ~   ## use in-model imputation
              (1|r|ID),                        ## within-patch individual (co)variation
              family=gaussian)
 
-bf_dispersal<-bf(N_rappelling | 
+bf_dispersal<-bf(N_rappelling2 | 
                    subset(is.valid_dispersal) ~ ## data is doubled due to putting size in the "long format"
                                                  ## we only use one value per individual here, to avoid artificial doubling of N  
                    landscape + 
@@ -493,12 +494,12 @@ bf_fecundity<-bf(lifetime_fecundity|
 
 ```{r}
 prior<-c(
-  set_prior("normal(0,1)",class="Intercept",resp=c("Nrappelling","sCTwidth","lifetimefecundity")),
+  set_prior("normal(0,1)",class="Intercept",resp=c("Nrappelling2","sCTwidth","lifetimefecundity")),
   set_prior("normal(3.4,1)",class="Intercept",resp=c("timetomaturity","adultlongevity")),
   ### bonte pnas and duffey (longipalpis) suggest a month (exp(3.4)) is a good ballpark prior
-  set_prior("normal(0,1)",class="b",resp=c("Nrappelling","lifetimefecundity","sCTwidth")),
+  set_prior("normal(0,1)",class="b",resp=c("Nrappelling2","lifetimefecundity","sCTwidth")),
   set_prior("normal(0,1)",class="b",resp=c("timetomaturity","adultlongevity")),
-  set_prior("normal(0,1)",class="sd",resp=c("Nrappelling","timetomaturity","lifetimefecundity","adultlongevity","sCTwidth")),
+  set_prior("normal(0,1)",class="sd",resp=c("Nrappelling2","timetomaturity","lifetimefecundity","adultlongevity","sCTwidth")),
   set_prior("lkj(3)",class="cor")
 )
 ```
@@ -636,7 +637,7 @@ bf_size2<-bf(s_CT_width |mi() ~   ## use in-model imputation
              (1|r|ID),                        ## within-patch individual (co)variation
              family=gaussian)
 
-bf_dispersal2<-bf(N_rappelling |
+bf_dispersal2<-bf(N_rappelling2 |
                    subset(is.valid_dispersal==1) ~ ## data is doubled due to putting size in the "long format"
                                                  ## we only use one value per individual here, to avoid artificial doubling of N  
                    landscape + 
