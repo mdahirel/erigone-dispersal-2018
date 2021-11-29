@@ -1,6 +1,6 @@
 ---
-title: "Erigone project 2018 - script"
-author: - "**Maxime Dahirel** (script author)"
+title: "Analysis code for 'Dispersal syndrome and landscape fragmentation in the salt-marsh specialist spider *Erigone longipalpis*'"
+author: - "**Maxime Dahirel** (script author), Marie Wullschleger, Tristan Berry, Solène Croci, Julien Pétillon (other authors)"
 date:
 output: 
   html_document:
@@ -16,83 +16,97 @@ editor_options:
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
+# A brief **Introduction**
 
+The aims of this study were:
 
-## **Introduction**
+- (i) to determine whether *Erigone longipalpis* spiders from a fragmented (sub)landscape evolve different traits than spiders from a more continuous landscape with more habitat remnants.
 
-The aims of this study were to:
+- (ii) to determine whether dispersal and life history traits were correlated in syndromes, and whether evolutionary changes seen in (ii) were constrained by this syndromes
 
-*to add*
+- (iii) to split phenotypic covariation into its genetic, maternal and environmental components. In the end however, this had to be scaled down to a more modest "split into within- and among-family components" due to relatively low N and sparse pedigree.
 
-## **Starters and data wrangling**
+# **Starters and data wrangling**
 
-*to complete*
+## Packages
 
-```{r load-packages}
+Let's start by loading the packages we need
+
+```{r load-packages1}
 library(arm)
 library(matrixStats)
+library(lubridate) ## conflict with here
+library(tidyverse)
 
 ## spatial stuff
 #library(ggmap) #still needed?? not sure
 library(ggspatial)
 library(osmdata)
 library(sf)
+```
 
-## pedigree stuff (still needed??)
-library(nadiv)
-
+```{r load-packages2}
 library(cmdstanr) ## Stan backend
 library(brms) ## the interface we are using
-library(tidyverse)
 library(bayesplot)
-library(ggdist)
 library(tidybayes)
 library(ggtext)
 library(patchwork) #plotting
-library(lubridate) ## conflict with here
+```
 
+```{r load-packages3}
 library(here)
 
 options(mc.cores = 4)
 ```
 
-let's load the main data:
+## Data loading
+
+And then let's load the various data tables:
 
 ```{r load-raw-datafiles}
 ## Load raw datasets
-data_main <- read_csv(here("data","erigone2018_females2.csv"),
-                      col_types = cols(sex=col_character())) %>%  
-  ##only females "F", so if col_types not given explicitly, "sex" column is parsed as logical
-            filter(generation > 0) # we only keep lab-born spiders for this analysis
+data_females <- read_csv(here("data","erigone2018_females2.csv"),
+                      col_types = cols(sex=col_character()))  
+  ## only females "F" in the table, 
+  ## so if col_types not given explicitly, "sex" column is parsed as logical
 
 ###NOTE to round sizes to nearest 0.1mm, with clear indication that raw-raw data are "more precise" but that's just artifact from 
 ## measurement software
 
-
-data_mothers <- read_csv(here("data","erigone2018_females.csv"),
-                      col_types = cols(sex=col_character())) %>%
-            filter(generation <2) %>% 
-  select(MOTHER= ID,
-         CT_length1_mom = CT_length1,
-         CT_length2_mom = CT_length1,
-         CT_width1_mom = CT_width1,
-         CT_width2_mom = CT_width2
-         )
+pedigree <- read_csv(here("data","erigone2018_pedigree.csv"))
 
 data_clutches <- read_csv(here("data","erigone2018_cocoons.csv"))
-
-pedigree <- read_csv(here("data","erigone2018_pedigree.csv"))
 
 sites <- read_csv(here("data","erigone2018_sites.csv"))
 
 pairings <- read_csv(here("data","erigone2018_pairings.csv"))
 
+weather <- read_csv(here("data","weather_data","pontorson_meteonet_2018.csv"))
+
 ## see later for environmental data, and male data
 ```
 
-now let's load what we need for maps:
 
-```{r}
+What do we have in there?:
+
+<!--ADD DESCRIPTION OF DATA-->
+
+our choice of life history metrics is inspired (but not 100% identical) to Healy et al 2019 NEE:
+
+- Age at maturity
+- Adult longevity
+- Fecundity
+
+We add to that
+
+- body size information
+- dispersal information (presence/absence of dispersal-related behaviours; rappelling frequencies).
+
+
+Let's also load what we'll need for the map **Figure 1** (see also the `erigone-2018_supplementary` file for other uses of these map data):
+
+```{r load-gis-files}
 points<-st_read(here("data","erigone2018_GISlayers.gpkg"),
         layer="sampling_sites")
 
@@ -103,6 +117,493 @@ patches<-st_read(here("data","erigone2018_GISlayers.gpkg"),
 coastline<-st_read(here("data","erigone2018_GISlayers.gpkg"),
         layer="coastline")
 ```
+
+## Various checks
+
+Let's do some checks on the raw data, to get some useful info for the Methods.
+
+First let's confirm that fieldwork happened during (relatively) sunny weather:
+
+```{r weather-check}
+data_females %>% 
+  filter(generation == 0) %>% 
+  select(captured_on) %>% 
+  distinct()
+
+## field days are April 12, 13, May 4, May 9
+
+## a quick confirmation of field notes that sampling was done in sunny weather
+weather %>% 
+ filter(yday(date) %in% yday(ymd(c("2018-04-12","2018-04-13","2018-05-04","2018-05-09")))) %>% 
+  mutate(was_sampling=hour(date)>9 & hour(date)<18) %>% #sampling was between 10pm and 5pm actually, so larger margin
+ group_by(day_of_year=yday(date),was_sampling) %>% 
+ summarise(rain=sum(precip))
+
+## no rain indeed during sampling period!!
+```
+
+Let's check how many females were caught in the field, and in how many patches:
+
+```{r}
+sum(sites$N_adult_females) # number of females caught total
+
+sites %>% group_by(landscape,is_habitat) %>% 
+  summarise(N_patches_with_spiders=sum(N_adult_females>0),
+            N_patches_total=n())
+```
+
+How many spiders kept after adulthood were born in the lab:
+
+```{r}
+pedigree %>% 
+  filter(generation>0) %>% 
+  group_by(sex) %>% 
+  count()
+```
+
+How many spiderlings hatched:
+
+```{r}
+sum(data_clutches$N_spiderlings)
+```
+
+How many wild caught females produced eggs and babies:
+
+```{r}
+## number of wild females that produced cocoons and babies
+data_females %>% 
+  select(ID,patch,generation) %>% 
+  right_join(data_clutches) %>% 
+  filter(generation==0) %>%  ## keep only the wild-caught
+  group_by(ID,patch) %>% 
+  summarise(had_cocoons=max(N_cocoons>0),
+            had_babies=max(N_spiderlings>0)) %>% 
+  group_by(patch) %>% 
+  summarise(N_with_cocoons=sum(had_cocoons),
+            N_with_babies=sum(had_babies)) %>% 
+  print() %>% 
+  summarise(N_with_cocoons=sum(N_with_cocoons),N_with_babies=sum(N_with_babies))
+```
+
+How many mating each male was involved with, and how many males were involved in mating:
+```{r}
+### how many unique males were used in matings?
+pairings$mateID %>% na.omit() %>% unique() %>% length()
+
+### how many matings each used male was involved in?
+pairings %>% 
+  filter(is.na(mateID)==FALSE) %>% ## filter out the non-mated and the wild-caughts
+  group_by(mateID) %>% 
+  summarise(N_uses_per_male=length(mateID)) %>%
+  summarise(median=median(N_uses_per_male),
+            mean=mean(N_uses_per_male),
+            percent_more_than_one=mean(N_uses_per_male>1),
+            min=min(N_uses_per_male),max=max(N_uses_per_male))
+```
+
+## Data wrangling and prep
+
+Now we prep our data in order so that we can run our planned model. First, we need to:
+
+- summarise the fecundity per clutch table into fecundity data per individual
+- convert the dates of life events into life stage durations
+- merge these tables
+- keep only lab-born females!!
+
+```{r data-wrangling-1}
+fecundity <- data_clutches %>% 
+  group_by(ID) %>% 
+  summarise(lifetime_fecundity=sum(N_spiderlings),
+            N_cocoons=sum(N_cocoons),
+            N_cocoons_hatched=sum(Cocoon_hatched))
+```
+
+
+```{r data-wrangling-2}
+data <- left_join(data_females,fecundity) %>%
+  filter(generation>0) %>% 
+  mutate(time_to_maturity = (ymd(date_maturity)-ymd(date_hatching)) %>%  
+           as.numeric(),
+         adult_longevity = (ymd(date_death)-ymd(date_maturity)) %>% 
+           as.numeric()
+         ) %>% 
+  mutate(N_tiptoe = N_rappelling + N_other_tiptoe) %>% 
+  mutate(obsgap_maturity=case_when(date_maturity=="2018-05-22" | date_egg=="2018-05-22" ~ "yes",
+                             wday(date_maturity,week_start=1)==1 | wday(date_egg,week_start=1)==1 ~ "yes",
+                             date_maturity=="2018-05-02" | date_egg== "2018-05-02" |
+                               date_maturity=="2018-05-09" | date_egg=="2018-05-09" ~ "yes",
+                             T~ "no")) %>% 
+  mutate(obsgap_longevity=case_when(date_maturity=="2018-05-22" | date_death=="2018-05-22" ~ "yes",
+                             wday(date_maturity,week_start=1)==1 | wday(date_death,week_start=1)==1 ~ "yes",
+                             date_maturity=="2018-05-02" | date_death== "2018-05-02" |
+                               date_maturity=="2018-05-09" | date_death=="2018-05-09" ~ "yes",
+                             T~ "no"))
+## we add variables that say whether or not one of the two observations that govern phase duration
+## were made right after a gap in observation (WE, holdays, other)
+## leading to potential bias
+
+
+data <- data %>% 
+  mutate(adult_censored = (outlived_experiment==TRUE | accidental_death==TRUE),
+         time_for_repro = as.numeric(ymd(date_death)-ymd(date_mating)),
+         had_mate =  (is.na(data$date_mating)==FALSE)
+  )
+```
+
+Now we need to pivot the size data
+```{r}
+temp_length<- data %>%
+  select(ID,patch,CT_length1,CT_length2) %>% 
+  pivot_longer(cols=c(CT_length1,CT_length2),
+               names_to = "measurement",
+               names_prefix="CT_length",
+               values_to="CT_length") 
+
+temp_width<- data %>%
+  select(ID,patch,CT_width1,CT_width2) %>% 
+  pivot_longer(cols=c(CT_width1,CT_width2),
+               names_to = "measurement",
+               names_prefix="CT_width",
+               values_to="CT_width") 
+
+temp_size=left_join(temp_length,temp_width)
+
+data<-data %>% 
+  select(-c(CT_length1,CT_length2,CT_width1,CT_width2)) %>%
+  left_join(temp_size)
+
+data <- data %>% 
+  mutate(s_CT_width=scale(CT_width)[,1],
+         s_CT_length=scale(CT_length)[,1]) %>% 
+  mutate(landscape=fct_relevel(landscape,"west",after=0))
+## we re-order so west is left in plots like in maps
+
+```
+
+```{r data-wrangling-2}
+
+data <- data %>% 
+  mutate(valid_dispersal = as.numeric(is.na(N_tiptoe)==FALSE & 
+                                        natural_death_before_dispersal==0 &
+                                        data$measurement==1),
+         valid_maturity = as.numeric(data$measurement==1),
+         valid_fecundity=as.numeric(is.na(lifetime_fecundity)==FALSE & 
+                                      time_for_repro>0 & 
+                                    had_mate ==TRUE &  ## so we exclude all unmated spiders and spiders that did not have time to lay eggs
+                            measurement==1),
+         valid_longevity=as.numeric(measurement==1)
+  )
+
+```
+
+Now that we have our clean data, let's do a few more checks for methods
+
+```{r}
+mean(data$date_mating-data$date_maturity,na.rm=TRUE)
+sd(data$date_mating-data$date_maturity,na.rm=TRUE)
+range(as.numeric(data$date_mating-data$date_maturity),na.rm=TRUE)
+
+ sum(data$outlived_experiment & data$measurement==1,na.rm=TRUE)# how many right censored
+ sum(data_females$outlived_experiment)
+ 
+ 
+ sum(!is.na(data$N_tiptoe)& data$measurement==1)
+ 
+ sum(!is.na(data$CT_width) & data$measurement==1) ## how many females measured
+ 
+ sum(!is.na(data$date_mating) & data$time_for_repro>0 & data$measurement==1)
+```
+
+```{r need_for_family_model}
+data <- data %>% 
+  mutate(animal=ID) %>% 
+  left_join(pedigree)
+```
+
+
+```{r dummy}
+#
+#data <- data %>% 
+#  mutate(N_tiptoe = replace_na(N_tiptoe,0),
+#         time_to_maturity= replace_na(time_to_maturity,0),
+#         adult_longevity= replace_na(adult_longevity,0),
+#         lifetime_fecundity = replace_na(lifetime_fecundity,0))
+#
+
+```
+
+# The models
+
+## Population densities
+
+
+let's analyse population densities
+
+```{r}
+sites<-sites %>% 
+  mutate(landscape=fct_relevel(landscape,"west",after=0))
+```
+
+the main model, including only "true" habitat
+```{r}
+if (file.exists(here("R_output", "mod_popsize.Rdata"))) {
+  # this if-else statement is avoid re-fitting a model if there is already one existing in R_output
+  # to override, re-run the model and re-save manually by selecting only the relevant code lines (or delete the Rdata object before relaunching this code chunk)
+  load(here("R_output", "mod_popsize.Rdata"))
+} else {
+mod_pop <- brm(
+  N_adult_females|rate(person_hours_on_patch)~
+    landscape,family=poisson,
+  data=subset(sites, is_habitat=="y"),
+  prior=c(
+    set_prior("normal(0,1)",class="Intercept"),
+    set_prior("normal(0,1)",class="b")
+  ),
+        iter=6000,warmup=3000,chains=4,
+        seed=42,
+        backend="cmdstanr"
+)
+  save(list = c("mod_pop"), file = here("R_output", "mod_popsize.Rdata"))
+}
+```
+
+```{r}
+if (file.exists(here("R_output", "mod_popsize_suppl.Rdata"))) {
+  # this if-else statement is avoid re-fitting a model if there is already one existing in R_output
+  # to override, re-run the model and re-save manually by selecting only the relevant code lines (or delete the Rdata object before relaunching this code chunk)
+  load(here("R_output", "mod_popsize_suppl.Rdata"))
+} else {
+mod_pop_suppl <- brm(
+  N_adult_females|rate(person_hours_on_patch)~
+    landscape,family=poisson,
+  data=sites,
+  prior=c(
+    set_prior("normal(0,1)",class="Intercept"),
+    set_prior("normal(0,1)",class="b")
+  ),
+        iter=6000,warmup=3000,chains=4,
+        seed=42,
+        backend="cmdstanr"
+)
+  save(list = c("mod_pop_suppl"), file = here("R_output", "mod_popsize_suppl.Rdata"))
+}
+```
+
+## trait
+
+```{r}
+bf_width_test<-bf(s_CT_width |mi() ~              
+             (1|r|ID),                        #
+             family=gaussian)
+
+bf_length_test<-bf(s_CT_length |mi() ~   
+             (1|r|ID),                        #
+             family=gaussian)
+
+prior_test<-c(
+  set_prior("normal(0,1)",class="Intercept",resp=c("sCTwidth","sCTlength")),
+  set_prior("normal(0,1)",class="sd",resp=c("sCTwidth","sCTlength")),
+  set_prior("lkj(2)",class="cor")
+)
+
+mod_test=brm(mvbf(bf_width_test+bf_length_test),
+        data=data,
+        iter=6000,warmup=3000,chains=4,
+        prior=prior_test,
+        seed=42,
+        backend="cmdstanr")
+
+```
+
+
+```{r}
+bf_width1<-bf(s_CT_width |mi() ~   ## use in-model imputation
+              landscape +                     ## interpatch variation, fixed component
+             (1|patch)+                       ## interpatch variation, random component
+             (1|r|ID),                        ## within-patch individual (co)variation
+             family=gaussian)
+
+bf_length1<-bf(s_CT_length |mi() ~   ## use in-model imputation
+              landscape +                     ## interpatch variation, fixed component
+             (1|patch)+                       ## interpatch variation, random component
+             (1|r|ID),                        ## within-patch individual (co)variation
+             family=gaussian)
+
+bf_dispersal1<-bf(N_tiptoe | 
+                   subset(valid_dispersal) ~ ##  
+                   landscape + 
+                   (1|patch)+
+                   (1|r|ID),
+                 family=poisson)
+
+bf_devtime1<-bf(time_to_maturity | 
+                 subset(valid_maturity) ~ 
+                 landscape + 
+                 obsgap_maturity +              ## we include this as a covariate to control whether obs gaps bias our times
+             (1|patch)+
+             (1|r|ID),family=poisson)
+
+bf_longevity1<-bf(adult_longevity|
+                   cens(adult_censored) +   ## some individuals were not observed until the end of their natural lifespan (accidental loss/killing or outlived the experiment)
+                   subset(valid_longevity) ~ 
+                   landscape + 
+                   obsgap_longevity +
+             (1|patch)+
+             (1|r|ID),family=poisson)
+
+
+bf_fecundity1<-bf(lifetime_fecundity|
+                   rate(time_for_repro) + ### we analysed the productivity (N offspring per day available to lay eggs)
+                   subset(valid_fecundity) ~ 
+                   landscape + 
+             (1|patch)+
+             (1|r|ID),family=poisson)
+```
+
+
+```{r}
+prior<-c(
+  set_prior("normal(0,1)",class="Intercept",resp=c("Ntiptoe","lifetimefecundity")),
+  set_prior("normal(3.4,1)",class="Intercept",resp=c("timetomaturity","adultlongevity")),
+  ### bonte pnas and duffey (longipalpis) suggest a month (exp(3.4)) is a good ballpark prior
+  set_prior("normal(0,1)",class="b",resp=c("Ntiptoe","lifetimefecundity","timetomaturity","adultlongevity")),
+  set_prior("normal(0,1)",class="sd",resp=c("Ntiptoe","timetomaturity","lifetimefecundity","adultlongevity")),
+  set_prior("lkj(3)",class="cor")
+)
+
+prior_width<-c(
+  set_prior("normal(0,1)",class="Intercept",resp=c("sCTwidth")),
+  set_prior("normal(0,1)",class="b",resp=c("sCTwidth")),
+  set_prior("normal(0,1)",class="sd",resp=c("sCTwidth"))
+)
+
+prior_length<-c(
+  set_prior("normal(0,1)",class="Intercept",resp=c("sCTlength")),
+  set_prior("normal(0,1)",class="b",resp=c("sCTlength")),
+  set_prior("normal(0,1)",class="sd",resp=c("sCTlength"))
+)
+```
+
+
+```{r}
+if (file.exists(here("R_output", "multivar_mod_1.Rdata"))) {
+  # this if-else statement is avoid re-fitting a model if there is already one existing in R_output
+  # to override, re-run the model and re-save manually by selecting only the relevant code lines (or delete the Rdata object before relaunching this code chunk)
+  load(here("R_output", "multivar_mod_1.Rdata"))
+} else {
+  
+mmod1_width=brm(mvbf(bf_dispersal1+bf_devtime1+bf_fecundity1+bf_longevity1+bf_width1),
+        data=data,
+        iter=6000,warmup=3000,chains=4,
+        prior=c(prior_width,prior),
+        control=list(adapt_delta=0.99,max_treedepth=15),
+        seed=42,
+        backend="cmdstanr")
+
+mmod1_length=brm(mvbf(bf_dispersal1+bf_devtime1+bf_fecundity1+bf_longevity1+bf_length1),
+        data=data,
+        iter=6000,warmup=3000,chains=4,
+        prior=c(prior_length,prior),
+        control=list(adapt_delta=0.99,max_treedepth=15),
+        seed=42,
+        backend="cmdstanr")
+
+  save(list = c("mmod1"), file = here("R_output", "multivar_mod_1.Rdata"))
+}
+```
+
+
+then a model where we split this into "relatedness + common environment" and residual (or within and among families, in the parlance of lynch walsh):
+
+we cannot go further and include father info since it is missing for G1, and we cannot assume that wild caught females only mated with one male (which would allow us to add these phantom males to the pedigree) since there is indication that erigone females mate multiple times (anecdote in de meester bonte 2010 among others,see also Comparative  study  of  courtship  and  copulation  in  fiveOedothorax species)
+
+```{r}
+bf_width2<-bf(s_CT_width |mi() ~   ## use in-model imputation
+              landscape +                     ## interpatch variation, fixed component
+             (1|patch)+                       ## interpatch variation, random component
+               (1|q|MOTHER) + 
+             (1|r|ID),                        ## within-patch individual (co)variation
+             family=gaussian)
+
+bf_length2<-bf(s_CT_length |mi() ~   ## use in-model imputation
+              landscape +                     ## interpatch variation, fixed component
+             (1|patch)+                       ## interpatch variation, random component
+                (1|q|MOTHER) + 
+             (1|r|ID),                        ## within-patch individual (co)variation
+             family=gaussian)
+
+bf_dispersal2<-bf(N_tiptoe | 
+                   subset(valid_dispersal) ~ ##  
+                   landscape + 
+                   (1|patch)+
+                     (1|q|MOTHER) + 
+                   (1|r|ID),
+                 family=poisson)
+
+bf_devtime2<-bf(time_to_maturity | 
+                 subset(valid_maturity) ~ 
+                 landscape + 
+                 obsgap_maturity +              ## we include this as a covariate to control whether obs gaps bias our times
+             (1|patch)+
+                (1|q|MOTHER) + 
+             (1|r|ID),family=poisson)
+
+bf_longevity2<-bf(adult_longevity|
+                   cens(adult_censored) +   ## some individuals were not observed until the end of their natural lifespan (accidental loss/killing or outlived the experiment)
+                   subset(valid_longevity) ~ 
+                   landscape + 
+                   obsgap_longevity +
+             (1|patch)+
+                (1|q|MOTHER) + 
+             (1|r|ID),family=poisson)
+
+
+bf_fecundity2<-bf(lifetime_fecundity|
+                   rate(time_for_repro) + ### we analysed the productivity (N offspring per day available to lay eggs)
+                   subset(valid_fecundity) ~ 
+                   landscape + 
+             (1|patch)+
+                (1|q|MOTHER) + 
+             (1|r|ID),family=poisson)
+
+```
+
+
+```{r}
+if (file.exists(here("R_output", "multivar_mod_2.Rdata"))) {
+  # this if-else statement is avoid re-fitting a model if there is already one existing in R_output
+  # to override, re-run the model and re-save manually by selecting only the relevant code lines (or delete the Rdata object before relaunching this code chunk)
+  load(here("R_output", "multivar_mod_2.Rdata"))
+} else {
+  
+mmod2_width=brm(mvbf(bf_dispersal2+bf_devtime2+bf_fecundity2+bf_longevity2+bf_width2),
+        data=data,
+        iter=6000,warmup=3000,chains=4,
+        prior=c(prior_width,prior),
+        control=list(adapt_delta=0.99,max_treedepth=20),
+        seed=42,
+        backend="cmdstanr")
+
+mmod2_length=brm(mvbf(bf_dispersal2+bf_devtime2+bf_fecundity2+bf_longevity2+bf_length2),
+        data=data,
+        iter=6000,warmup=3000,chains=4,
+        prior=c(prior_length,prior),
+        control=list(adapt_delta=0.99,max_treedepth=20),
+        seed=42,
+        backend="cmdstanr")
+
+
+  save(list = c("mmod2"), file = here("R_output", "multivar_mod_2.Rdata"))
+}
+```
+
+we find that most of the syndrome is driven by within-family variation (something that would not have been visible from the attempt at doing an animal model)
+
+
+# Figures
+
+## Figure 1
+
 
 this the code chunk for fig 1, ie the map: (to clean)
 
@@ -165,247 +666,7 @@ plot_1b <- ggplot(data = patches_updated) +
         legend.box.just = 1))
 ```
 
-
-this is some quality checks for the Methods
-
-```{r}
-read_csv(here("data","erigone2018_females.csv"),
-                      col_types = cols(sex=col_character())) %>%  ##only females "F", if not given, will parse as logical
-            filter(generation == 0) %>% 
-  select(captured_on) %>% 
-  distinct()
-
-## field days are April 12, 13, May 4, May 9
-
-## a quick confirmation of field notes that sampling was done in sunny weather
-read_csv(here("data","weather_data","pontorson_meteonet_2018.csv")) %>% 
- filter(yday(date) %in% yday(ymd(c("2018-04-12","2018-04-13","2018-05-04","2018-05-09")))) %>% 
-  mutate(was_sampling=hour(date)>9 & hour(date)<18) %>% #sampling was between 10pm and 5pm actually, so larger margin
- group_by(yday(date),was_sampling) %>% 
- summarise(rain=sum(precip))
-
-## no rain indeed during sampling period
-```
-
-
-more checks
-
-```{r}
-pedigree %>% filter(generation>0) %>% group_by(sex) %>% count()
-
-# counting the number of adults in the lab
-
-sum(data_clutches$N_spiderlings) # total number of spiderlings hatched in lab
-
-
-sum(sites$N_adult_females) # number of females caught total
-
-sites %>% group_by(landscape,is_habitat) %>% 
-  summarise(N_patches_with_spiders=sum(N_adult_females>0),
-            N_patches_total=n())
-
-## number of wild females that produced cocoons and babies
-data_clutches %>% 
-  mutate(animal=ID) %>% 
-  left_join(pedigree) %>% 
-  filter(generation==0) %>% 
-  group_by(ID) %>% 
-  summarise(had_cocoons=max(N_cocoons>0),had_babies=max(N_spiderlings>0)) %>% 
-  summarise(N_with_cocoons=sum(had_cocoons),N_with_babies=sum(had_babies))
-  
-  
-pedigree %>% filter(generation>0) %>% group_by(sex) %>% count()
-
-# counting the number of adults in the lab
-
-
-pedigree %>% group_by(sex,generation) %>% count()
-
-pedigree %>% 
-  select(MOTHER,FATHER) %>% distinct() %>% ##keep all unique MOTHER/FATHER pairs
-  filter(is.na(FATHER)==FALSE) %>% 
-  group_by(FATHER) %>% summarise(N_uses_per_male=length(FATHER)) %>%
-  summarise(median=median(N_uses_per_male),
-            mean=mean(N_uses_per_male),
-            percent_more_than_one=mean(N_uses_per_male>1),
-            min=min(N_uses_per_male),max=max(N_uses_per_male))
-####mmm_but this is only for the ones that were kept to adults.
-#### did we keep that info for the eggs???
-
-### the version for all matings
-pairings %>% 
-  filter(is.na(mateID)==FALSE) %>% 
-  group_by(mateID) %>% summarise(N_uses_per_male=length(mateID)) %>%
-  summarise(median=median(N_uses_per_male),
-            mean=mean(N_uses_per_male),
-            percent_more_than_one=mean(N_uses_per_male>1),
-            min=min(N_uses_per_male),max=max(N_uses_per_male))
-
-
-
-sum(is.na(data_main$date_mating))
-
-```
-
-
-our choice of life history metrics is inspired (but not 100% identical) to Healy et al 2019 NEE:
-
-- Age at maturity
-- Adult longevity
-- Fecundity
-
-We add to that
-
-- body size information
-- dispersal information (presence/absence of dispersal-related behaviours; rappelling frequencies).
-
-```{r data-wrangling-1}
-fecundity <- data_clutches %>% 
-  group_by(ID) %>% 
-  summarise(lifetime_fecundity=sum(N_spiderlings),
-            N_cocoons=sum(N_cocoons),
-            N_cocoons_hatched=sum(Cocoon_hatched))
-
-
-data <- left_join(data_main,fecundity) %>%
-  mutate(animal = ID) %>% 
-  left_join(pedigree) %>% 
-  mutate(lifetime_fecundity=replace_na(lifetime_fecundity,0), 
-         ###individuals with no record in the fecundity are not NA, they failed to reproduce
-         ### but in some cases it may be beccause no mating; we'll account for that in analysis
-         N_cocoons=replace_na(N_cocoons,0),
-         N_cocoons_hatched=replace_na(N_cocoons_hatched,0),
-         N_rappelling=replace_na(N_rappelling,0),
-         N_other_tiptoe=replace_na(N_other_tiptoe,0),
-         ## we do the same for rappelling, a few NA because died before dispersal
-         ## but for some downstream methods we need something with no NAs
-         ## so dummy variables
-         ) %>% 
-  mutate(time_to_maturity = (ymd(date_maturity)-ymd(date_hatching)) %>%  as.numeric(),
-         adult_longevity = (ymd(date_death)-ymd(date_maturity)) %>%  as.numeric()
-         ) %>% 
-  mutate(generation = factor(generation),
-         clutchID = paste(MOTHER,"-",as.character(date_egg),sep="")###wild are assumed to not be direct siblings, all count as their own clutch
-  ) %>% 
-  mutate(obsgap_maturity=case_when(date_maturity=="2018-05-22" | date_egg=="2018-05-22" ~ "yes",
-                             wday(date_maturity,week_start=1)==1 | wday(date_egg,week_start=1)==1 ~ "yes",
-                             date_maturity=="2018-05-02" | date_egg== "2018-05-02" |
-                               date_maturity=="2018-05-09" | date_egg=="2018-05-09" ~ "yes",
-                             T~ "no")) %>% 
-  mutate(obsgap_longevity=case_when(date_maturity=="2018-05-22" | date_death=="2018-05-22" ~ "yes",
-                             wday(date_maturity,week_start=1)==1 | wday(date_death,week_start=1)==1 ~ "yes",
-                             date_maturity=="2018-05-02" | date_death== "2018-05-02" |
-                               date_maturity=="2018-05-09" | date_death=="2018-05-09" ~ "yes",
-                             T~ "no"))
-
-## we add variables that say whether or not one of the two observations that govern phase duration
-## were made right after a gap in observation (WE, holdays, other)
-## leading to potential bias
-
-```
-
-```{r general-model-trialversion}
-data$adult_censored <- (data$outlived_experiment==TRUE | data$accidental_death==TRUE)
-data$time_for_repro=as.numeric(ymd(data$date_death)-ymd(data$date_mating))
-data$had.mate<- (is.na(data$date_mating)==FALSE)
-```
-
-```{r}
-temp_length<- data %>%
-  select(ID,CT_length1,CT_length2) %>% 
-  pivot_longer(cols=c(CT_length1,CT_length2),
-               names_to = "size_measurement",
-               names_prefix="CT_length",
-               values_to="CT_length") 
-
-temp_width<- data %>%
-  select(ID,CT_width1,CT_width2) %>% 
-  pivot_longer(cols=c(CT_width1,CT_width2),
-               names_to = "size_measurement",
-               names_prefix="CT_width",
-               values_to="CT_width") 
-
-temp_size=left_join(temp_length,temp_width)
-
-data<-data %>% 
-  select(-c(CT_length1,CT_length2,CT_width1,CT_width2)) %>% 
-  left_join(temp_size) %>% 
-  mutate(s_CT_width=scale(CT_width)[,1],
-         s_CT_length=scale(CT_length)[,1]) %>% 
-  mutate(landscape=fct_relevel(landscape,"west",after=0))
-## we re-order so west is left in plots like in maps
-
-```
-
-more checks for methods
-```{r}
-mean(data$date_mating-data$date_maturity,na.rm=TRUE)
-sd(data$date_mating-data$date_maturity,na.rm=TRUE)
-range(as.numeric(data$date_mating-data$date_maturity),na.rm=TRUE)
-
- sum(data$outlived_experiment)# how many right censored
- 
- sum(is.na(data$N_rappelling)& data$size_measurement==1)
- 
- sum(!is.na(data$CT_width) & data$size_measurement==1) ## how many females measured
- 
-  sum(!is.na(data$date_mating) & data$time_for_repro>0 & data$size_measurement==1)
-```
-
-# models
-
-
-let's analyse population densities
-
-```{r}
-sites<-sites %>% 
-  mutate(landscape=fct_relevel(landscape,"west",after=0))
-```
-
-the main model, includig only "true" habitat
-```{r}
-if (file.exists(here("R_output", "mod_popsize.Rdata"))) {
-  # this if-else statement is avoid re-fitting a model if there is already one existing in R_output
-  # to override, re-run the model and re-save manually by selecting only the relevant code lines (or delete the Rdata object before relaunching this code chunk)
-  load(here("R_output", "mod_popsize.Rdata"))
-} else {
-mod_pop <- brm(
-  N_adult_females|rate(person_hours_on_patch)~
-    landscape,family=poisson,
-  data=subset(sites, is_habitat=="y"),
-  prior=c(
-    set_prior("normal(0,1)",class="Intercept"),
-    set_prior("normal(0,1)",class="b")
-  ),
-        iter=6000,warmup=3000,chains=4,
-        seed=42,
-        backend="cmdstanr"
-)
-  save(list = c("mod_pop"), file = here("R_output", "mod_popsize.Rdata"))
-}
-```
-
-```{r}
-if (file.exists(here("R_output", "mod_popsize_suppl.Rdata"))) {
-  # this if-else statement is avoid re-fitting a model if there is already one existing in R_output
-  # to override, re-run the model and re-save manually by selecting only the relevant code lines (or delete the Rdata object before relaunching this code chunk)
-  load(here("R_output", "mod_popsize_suppl.Rdata"))
-} else {
-mod_pop_suppl <- brm(
-  N_adult_females|rate(person_hours_on_patch)~
-    landscape,family=poisson,
-  data=sites,
-  prior=c(
-    set_prior("normal(0,1)",class="Intercept"),
-    set_prior("normal(0,1)",class="b")
-  ),
-        iter=6000,warmup=3000,chains=4,
-        seed=42,
-        backend="cmdstanr"
-)
-  save(list = c("mod_pop_suppl"), file = here("R_output", "mod_popsize_suppl.Rdata"))
-}
-```
+## Figure 2
 
 
 a draft of the figure
@@ -432,96 +693,6 @@ plot2<-ggplot()+
   theme(axis.title.y = element_markdown())
 
 plot2
-```
-
-
-first a model for the phenotypic correlation:
-
-we notes the "valid" points for each variable (for the subset)(mostly involve avoiding duplicates for non size variables, but not only)
-```{r}
-data$is.valid_dispersal=as.numeric(data$size_measurement==1 & 
-                            data$natural_death_before_dispersal==0)
-
-data$is.valid_maturity=as.numeric(data$size_measurement==1)
-
-data$is.valid_fecundity=as.numeric(data$time_for_repro>0 & 
-                                     data$had.mate ==TRUE &  ## so we exclude all unmated spiders and spiders that did not have time to lay eggs
-                            data$size_measurement==1)
-
-data$is.valid_longevity=as.numeric(data$size_measurement==1)
-```
-
-
-```{r}
-bf_size<-bf(s_CT_width |mi() ~   ## use in-model imputation
-              landscape +                     ## interpatch variation, fixed component
-             (1|patch)+                       ## interpatch variation, random component
-             (1|r|ID),                        ## within-patch individual (co)variation
-             family=gaussian)
-
-bf_dispersal<-bf(N_rappelling2 | 
-                   subset(is.valid_dispersal) ~ ## data is doubled due to putting size in the "long format"
-                                                 ## we only use one value per individual here, to avoid artificial doubling of N  
-                   landscape + 
-                   (1|patch)+
-                   (1|r|ID),
-                 family=poisson)
-
-bf_devtime<-bf(time_to_maturity | 
-                 subset(is.valid_maturity) ~ 
-                 landscape + 
-                 obsgap_maturity +              ## we include this as a covariate to control whether obs gaps bias our times
-             (1|patch)+
-             (1|r|ID),family=poisson)
-
-bf_longevity<-bf(adult_longevity|
-                   cens(adult_censored) +   ## some individuals were not observed until the end of their natural lifespan (accidental loss/killing or outlived the experiment)
-                   subset(is.valid_longevity) ~ 
-                   landscape + 
-                   obsgap_longevity +
-             (1|patch)+
-             (1|r|ID),family=poisson)
-
-
-bf_fecundity<-bf(lifetime_fecundity|
-                   rate(time_for_repro) + ### we analysed the productivity (N offspring per day available to lay eggs)
-                   subset(is.valid_fecundity) ~ 
-                   landscape + 
-             (1|patch)+
-             (1|r|ID),family=poisson)
-```
-
-
-```{r}
-prior<-c(
-  set_prior("normal(0,1)",class="Intercept",resp=c("Nrappelling2","sCTwidth","lifetimefecundity")),
-  set_prior("normal(3.4,1)",class="Intercept",resp=c("timetomaturity","adultlongevity")),
-  ### bonte pnas and duffey (longipalpis) suggest a month (exp(3.4)) is a good ballpark prior
-  set_prior("normal(0,1)",class="b",resp=c("Nrappelling2","lifetimefecundity","sCTwidth")),
-  set_prior("normal(0,1)",class="b",resp=c("timetomaturity","adultlongevity")),
-  set_prior("normal(0,1)",class="sd",resp=c("Nrappelling2","timetomaturity","lifetimefecundity","adultlongevity","sCTwidth")),
-  set_prior("lkj(3)",class="cor")
-)
-```
-
-
-```{r}
-if (file.exists(here("R_output", "multivar_mod_1.Rdata"))) {
-  # this if-else statement is avoid re-fitting a model if there is already one existing in R_output
-  # to override, re-run the model and re-save manually by selecting only the relevant code lines (or delete the Rdata object before relaunching this code chunk)
-  load(here("R_output", "multivar_mod_1.Rdata"))
-} else {
-  
-mmod1=brm(mvbf(bf_dispersal+bf_devtime+bf_fecundity+bf_longevity+bf_size),
-        data=data,
-        iter=6000,warmup=3000,chains=4,
-        prior=prior,
-        control=list(adapt_delta=0.99,max_treedepth=15),
-        seed=42,
-        backend="cmdstanr")
-
-  save(list = c("mmod1"), file = here("R_output", "multivar_mod_1.Rdata"))
-}
 ```
 
 
@@ -624,78 +795,6 @@ plot3_a+plot3_b+plot3_c+plot3_d+plot3_e +
 ```
 
 
-
-then a model where we split this into "relatedness + common environment" and residual (or within and among families, in the parlance of lynch walsh):
-
-we cannot go further and include father info since it is missing for G1, and we cannot assume that wild caught females only mated with one male (which would allow us to add these phantom males to the pedigree) since there is indication that erigone females mate multiple times (anecdote in de meester bonte 2010 among others,see also Comparative  study  of  courtship  and  copulation  in  fiveOedothorax species)
-
-```{r}
-bf_size2<-bf(s_CT_width |mi() ~   ## use in-model imputation
-              landscape +                     ## interpatch variation, fixed component
-             (1|patch)+                       ## interpatch variation, random component
-              (1|q|MOTHER)+
-             (1|r|ID),                        ## within-patch individual (co)variation
-             family=gaussian)
-
-bf_dispersal2<-bf(N_rappelling2 |
-                   subset(is.valid_dispersal==1) ~ ## data is doubled due to putting size in the "long format"
-                                                 ## we only use one value per individual here, to avoid artificial doubling of N  
-                   landscape + 
-                   (1|patch)+
-                   (1|q|MOTHER)+
-                   (1|r|ID),
-                 family=poisson)
-
-bf_devtime2<-bf(time_to_maturity | 
-                 subset(is.valid_maturity==1) ~ 
-                 landscape + 
-                 obsgap_maturity +              ## we include this as a covariate to control whether obs gaps bias our times
-             (1|patch)+
-               (1|q|MOTHER)+
-             (1|r|ID),family=poisson)
-
-bf_longevity2<-bf(adult_longevity|
-                   cens(adult_censored) +   ## some individuals were not observed until the end of their natural lifespan (accidental loss/killing or outlived the experiment)
-                   subset(is.valid_longevity==1) ~ 
-                   landscape + 
-                   obsgap_longevity +
-             (1|patch)+
-               (1|q|MOTHER)+
-             (1|r|ID),family=poisson)
-
-
-bf_fecundity2<-bf(lifetime_fecundity|
-                   rate(time_for_repro) + ### we analysed the productivity (N offspring per day available to lay eggs)
-                   subset(is.valid_fecundity==1) ~ 
-                   landscape + 
-             (1|patch)+
-               (1|q|MOTHER)+
-             (1|r|ID),family=poisson)
-
-```
-
-
-```{r}
-if (file.exists(here("R_output", "multivar_mod_2.Rdata"))) {
-  # this if-else statement is avoid re-fitting a model if there is already one existing in R_output
-  # to override, re-run the model and re-save manually by selecting only the relevant code lines (or delete the Rdata object before relaunching this code chunk)
-  load(here("R_output", "multivar_mod_2.Rdata"))
-} else {
-  
-mmod2=brm(mvbf(bf_dispersal2+bf_devtime2+bf_fecundity2+bf_longevity2+bf_size2),
-        data=data,
-        iter=6000,warmup=3000,chains=4,
-        prior=prior,
-        control=list(adapt_delta=0.99,max_treedepth=20),
-        seed=42,
-        backend="cmdstanr")
-
-
-  save(list = c("mmod2"), file = here("R_output", "multivar_mod_2.Rdata"))
-}
-```
-
-we find that most of the syndrome is driven by within-family variation (something that would not have been visible from the attempt at doing an animal model)
 
 
 
@@ -860,6 +959,13 @@ print(sum_cor,n=Inf)
 
 
 ### annex what about an animal model?
+
+```{r load-packages2}
+## pedigree stuff (still needed??)
+library(nadiv)
+```
+
+
 
 
 ```{r data-wrangling-pedigree}
