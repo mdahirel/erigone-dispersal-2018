@@ -12,6 +12,9 @@ header-includes:
   - \renewcommand\linenumberfont{\normalfont\bfseries\small}
 ---
 
+<!--VERY IMPORTANT NOTE IF YOU WANT TO RE-KNIT OR RE-RUN THIS SUPPLEMENTARY-->
+<!-- a lot of code here assumes you've run the main code, and in particular that all objects saved while running the main code exist in the relevant folder-->
+
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE, eval = TRUE, message = FALSE, warning = FALSE)
 ```
@@ -47,118 +50,7 @@ library(here)
 options(mc.cores = 4)
 ```
 
-```{r load-raw-datafiles}
-## Load raw datasets
-data_main <- read_csv(here("data","erigone2018_females.csv"),
-                      col_types = cols(sex=col_character())) %>%  
-  ##only females "F", so if col_types not given explicitly, "sex" column is parsed as logical
-            filter(generation > 0) # we only keep lab-born spiders for this analysis
 
-###NOTE to round sizes to nearest 0.1mm, with clear indication that raw-raw data are "more precise" but that's just artifact from 
-## measurement software
-
-
-data_mothers <- read_csv(here("data","erigone2018_females.csv"),
-                      col_types = cols(sex=col_character())) %>%
-            filter(generation <2) %>% 
-  select(MOTHER= ID,
-         CT_length1_mom = CT_length1,
-         CT_length2_mom = CT_length1,
-         CT_width1_mom = CT_width1,
-         CT_width2_mom = CT_width2
-         )
-
-data_clutches <- read_csv(here("data","erigone2018_cocoons.csv"))
-
-pedigree <- read_csv(here("data","erigone2018_pedigree.csv"))
-
-sites <- read_csv(here("data","erigone2018_sites.csv"))
-
-pairings <- read_csv(here("data","erigone2018_pairings.csv"))
-
-## see later for environmental data, and male data
-```
-<!--start of a block of recreation of data, could be best to put up a write_csv in main code-->
-```{r}
-fecundity <- data_clutches %>% 
-  group_by(ID) %>% 
-  summarise(lifetime_fecundity=sum(N_spiderlings),
-            N_cocoons=sum(N_cocoons),
-            N_cocoons_hatched=sum(Cocoon_hatched))
-
-
-data <- left_join(data_main,fecundity) %>%
-  mutate(animal = ID) %>% 
-  left_join(pedigree) %>% 
-  mutate(lifetime_fecundity=replace_na(lifetime_fecundity,0), 
-         ###individuals with no record in the fecundity are not NA, they failed to reproduce
-         ### but in some cases it may be beccause no mating; we'll account for that in analysis
-         N_cocoons=replace_na(N_cocoons,0),
-         N_cocoons_hatched=replace_na(N_cocoons_hatched,0),
-         N_rappelling=replace_na(N_rappelling,0)
-         ## we do the same for rappelling, a few NA because died before dispersal
-         ## but for some downstream methods we need something with no NAs
-         ## so dummy variables
-         ) %>% 
-  mutate(time_to_maturity = (ymd(date_maturity)-ymd(date_hatching)) %>%  as.numeric(),
-         adult_longevity = (ymd(date_death)-ymd(date_maturity)) %>%  as.numeric()
-         ) %>% 
-  mutate(generation = factor(generation),
-         clutchID = paste(MOTHER,"-",as.character(date_egg),sep="")###wild are assumed to not be direct siblings, all count as their own clutch
-  ) %>% 
-  mutate(obsgap_maturity=case_when(date_maturity=="2018-05-22" | date_egg=="2018-05-22" ~ "yes",
-                             wday(date_maturity,week_start=1)==1 | wday(date_egg,week_start=1)==1 ~ "yes",
-                             date_maturity=="2018-05-02" | date_egg== "2018-05-02" |
-                               date_maturity=="2018-05-09" | date_egg=="2018-05-09" ~ "yes",
-                             T~ "no")) %>% 
-  mutate(obsgap_longevity=case_when(date_maturity=="2018-05-22" | date_death=="2018-05-22" ~ "yes",
-                             wday(date_maturity,week_start=1)==1 | wday(date_death,week_start=1)==1 ~ "yes",
-                             date_maturity=="2018-05-02" | date_death== "2018-05-02" |
-                               date_maturity=="2018-05-09" | date_death=="2018-05-09" ~ "yes",
-                             T~ "no"))
-
-## we add variables that say whether or not one of the two observations that govern phase duration
-## were made right after a gap in observation (WE, holdays, other)
-## leading to potential bias
-data$adult_censored <- (data$outlived_experiment==TRUE | data$accidental_death==TRUE)
-data$time_for_repro=as.numeric(ymd(data$date_death)-ymd(data$date_mating))
-data$had.mate<- (is.na(data$date_mating)==FALSE)
-
-temp_length<- data %>%
-  select(ID,CT_length1,CT_length2) %>% 
-  pivot_longer(cols=c(CT_length1,CT_length2),
-               names_to = "size_measurement",
-               names_prefix="CT_length",
-               values_to="CT_length") 
-
-temp_width<- data %>%
-  select(ID,CT_width1,CT_width2) %>% 
-  pivot_longer(cols=c(CT_width1,CT_width2),
-               names_to = "size_measurement",
-               names_prefix="CT_width",
-               values_to="CT_width") 
-
-temp_size=left_join(temp_length,temp_width)
-
-data<-data %>% 
-  select(-c(CT_length1,CT_length2,CT_width1,CT_width2)) %>% 
-  left_join(temp_size) %>% 
-  mutate(s_CT_width=scale(CT_width)[,1],
-         s_CT_length=scale(CT_length)[,1]) %>% 
-  mutate(landscape=fct_relevel(landscape,"west",after=0))
-
-data$is.valid_dispersal=as.numeric(data$size_measurement==1 & 
-                            data$natural_death_before_dispersal==0)
-
-data$is.valid_maturity=as.numeric(data$size_measurement==1)
-
-data$is.valid_fecundity=as.numeric(data$time_for_repro>0 & 
-                                     data$had.mate ==TRUE &  ## so we exclude all unmated spiders and spiders that did not have time to lay eggs
-                            data$size_measurement==1)
-
-data$is.valid_longevity=as.numeric(data$size_measurement==1)
-```
-<!--end of "data" recreation block-->
 
 # Supplementary Material 1. Difference in landscape metrics between western and eastern sides
 
@@ -230,9 +122,9 @@ test=tibble(dist=c(1:20)*100,index=1:20)  %>%
 
 ```
 
-Generally speaking and (mostly) independently of the spatial scale considered, *Puccinellia maritima*-dominated lawns, the favourable habitat for *E. longipalpis*, were more abundant on the western side (**Figure S1.1**) than on the eastern one. Individual meadow patches were also on average bigger (**Figures S1.2 and S1.3**), and *Puccinellia maritima* meadow pixels were typically more aggregated than on the eastern side (based on the Clumpiness Index; **Figure S1.4**). We used the Clumpiness index to examine habitat fragmentation *sensu stricto* because, based on @wangMeasuringHabitatFragmentation2014, it is one of the few commonly available metrics that is mostly independent of habitat abundance.
+Generally speaking and (mostly) independently of the spatial scale considered, *Puccinellia maritima*-dominated lawns, the favourable habitat for *E. longipalpis*, were more abundant around sampling sites on the western side (**Figure S1.1**) than on the eastern one. Individual meadow patches were also on average bigger (**Figures S1.2 and S1.3**), and *Puccinellia maritima* meadow pixels were typically more aggregated than on the eastern side (based on the Clumpiness Index; **Figure S1.4**). We used the Clumpiness index to examine habitat fragmentation *sensu stricto* because, based on @wangMeasuringHabitatFragmentation2014, it is one of the few commonly available metrics that is mostly independent of habitat abundance.
 
-```{r}
+```{r, fig.dim = c(4, 3)}
 test %>% 
   unnest(pland) %>% unnest(dist) %>% left_join(sites) %>% 
   mutate(landscape=paste("landscape =", landscape)) %>% 
@@ -252,7 +144,7 @@ test %>%
 
 **Figure S1.1.** Proportion of land and sea cover occupied by favourable habitat (i.e. *Puccinellia maritima*-dominated lawns) within a given radius of each sampling site, as a function of landscape. Each line represents one sampling site where *Erigone longipalpis* were found. Estimates are made using the R package `landscapemetrics` [@hesselbarthLandscapemetricsOpensourceTool2019] on rasters with a pixel size 10 by 10 m.
 
-```{r}
+```{r, fig.dim = c(4, 3)}
 test %>% 
   unnest(psize) %>% unnest(dist) %>% left_join(sites) %>% 
   mutate(landscape=paste("landscape =", landscape)) %>% 
@@ -271,7 +163,7 @@ test %>%
 
 **Figure S1.2.** Mean patch area (*Puccinellia maritima*-dominated lawns) as a function of landscape, within circular buffers of varying radius around each sampling site. Each line represents one sampling site where *Erigone longipalpis* were found. Estimates are made using the R package `landscapemetrics` [@hesselbarthLandscapemetricsOpensourceTool2019] on rasters with a pixel size 10 by 10 m. Note that patches may be truncated by the buffer window.
 
-```{r}
+```{r, fig.dim = c(4, 3)}
 test %>% 
   unnest(psize) %>% unnest(dist) %>% left_join(sites) %>% 
   mutate(landscape=paste("landscape =", landscape)) %>% 
@@ -290,7 +182,7 @@ test %>%
 
 **Figure S1.3.** Mean radius of gyration for *Puccinellia maritima*-dominated lawns (i.e. the mean distance between a patch pixel and its corresponding patch centroid) as a function of landscape, within circular buffers of varying radius around each sampling site. Each line represents one sampling site where *Erigone longipalpis* were found. Estimates are made using the R package `landscapemetrics` [@hesselbarthLandscapemetricsOpensourceTool2019] on rasters with a pixel size 10 by 10 m. Note that patches may be truncated by the buffer window.
 
-```{r}
+```{r, fig.dim = c(4, 3)}
 test %>% 
   unnest(lmetrics) %>% unnest(dist) %>% left_join(sites) %>% 
   mutate(landscape=paste("landscape =", landscape)) %>% 
@@ -311,10 +203,9 @@ test %>%
 
 # Supplementary Material 2. Relationship between the numbers of lab-born spiders and wild-caught spiders sourced from a patch
 
-```{r}
+```{r, fig.dim = c(4, 4.5)}
 count_females <- read_csv(here("data","erigone2018_females.csv"),
                       col_types = cols(sex=col_character())) %>%  
-  ##only females "F", so if col_types not given explicitly, "sex" column is parsed as logical
   mutate(wild=generation ==0) %>%
   group_by(wild, patch) %>% 
   count() %>% 
@@ -532,39 +423,22 @@ $$
 
 # Supplementary Material 4. Effect of landscape of origin on abundance, revisited
 
-```{r, results="hide"}
-sites2<-sites %>% 
-  mutate(landscape=fct_relevel(landscape,"west",after=0))
-  
-mod_pop_suppl=brm(
-  N_adult_females|rate(person_hours_on_patch)~
-    landscape,family=poisson,
-  data=sites2,
-  prior=c(
-    set_prior("normal(0,1)",class="Intercept"),
-    set_prior("normal(0,1)",class="b")
-  ),
-        iter=6000,warmup=3000,chains=4,
-        seed=42,
-        backend="cmdstanr"
-)
-```
 
+```{r, fig.dim = c(4, 4.5)}
+load(here("R_output", "mod_popsize_suppl.Rdata"))
 
-```{r}
-newdata_pop<-sites2 %>% 
-  select(landscape) %>% 
-  distinct() %>% 
-  mutate(person_hours_on_patch=1) %>% 
-  add_fitted_draws(mod_pop_suppl)
+newdata_pop<-tibble(landscape=factor(c("west","east"),
+                                     levels=c("west","east")),
+                    person_hours_on_patch=1) %>% 
+  add_epred_draws(mod_pop_suppl)
   
 plot2<-ggplot()+
-  stat_eye(data=newdata_pop,aes(landscape,.value),
+  stat_eye(data=newdata_pop,aes(landscape,.epred),
            slab_alpha=0.5,
            fill="#238443",
            .width=c(0.001,0.95),
            point_interval="mean_hdi")+
-  geom_jitter(data=sites2,aes(landscape,N_adult_females/person_hours_on_patch),
+  geom_jitter(data=sites,aes(landscape,N_adult_females/person_hours_on_patch),
               position=position_jitter(width=0.2),pch=21,size=2,fill="white")+
   scale_x_discrete("landscape of origin")+
   scale_y_continuous("Population density (female *E. longipalpis* per person-hour)")+
@@ -579,19 +453,22 @@ plot2
 
 # Supplementary Material 5. Effect of landscape of origin on phenotypic traits, revisited
 
-```{r}
-load(here("R_output", "multivar_mod_2.Rdata"))
+```{r, fig.dim = c(7,6)}
+load(here("R_output","processed_data.Rdata"))
+load(here("R_output", "multivar_mods_2.Rdata"))
 
 newdata_maturity<-data %>% 
   select(landscape) %>% 
   distinct() %>% 
-  mutate(is.valid_maturity=1, obsgap_maturity="no") %>% 
-  add_epred_draws(mmod2,resp="timetomaturity",re_formula = NA)
+  mutate(valid_maturity=1, obsgap_maturity="no") %>% 
+  add_epred_draws(mmod2_width,resp="timetomaturity",re_formula = NA)
 
 plot3_a<-ggplot()+
-  geom_boxplot(data=subset(data,is.valid_maturity==1),
-               aes(landscape,time_to_maturity, group=patch),col="grey50")+
-  stat_eye(data=newdata_maturity,aes(landscape,.epred),
+  geom_boxplot(data=subset(data,valid_maturity==1),
+               aes(landscape,time_to_maturity, group=patch),
+               col="grey50")+
+  stat_eye(data=newdata_maturity,
+           aes(landscape,.epred),
            slab_alpha=0.5,
            fill="#238443",
            .width=c(0.001,0.95),
@@ -602,47 +479,53 @@ plot3_a<-ggplot()+
 newdata_size<-data %>% 
   select(landscape) %>% 
   distinct() %>%  
-  add_epred_draws(mmod2,resp="sCTwidth",re_formula = NA) %>% 
-  mutate(.epred=(.epred*sd(data$CT_width,na.rm=TRUE))+mean(data$CT_width,na.rm=TRUE))
+  add_epred_draws(mmod2_width,resp="sCTwidth",re_formula = NA) %>% 
+  mutate(.epred=(.epred*sd(data$CT_width,na.rm=TRUE))+
+           mean(data$CT_width,na.rm=TRUE))
 # we back transform the predictions from scaled values to observed
 
 plot3_b<-ggplot()+
-  geom_boxplot(data=data,aes(landscape,CT_width, group=patch),col="grey50")+
-  stat_eye(data=newdata_size,aes(landscape,.epred),
+  geom_boxplot(data=data,
+               aes(landscape,CT_width, group=patch),col="grey50")+
+  stat_eye(data=newdata_size,
+           aes(landscape,.epred),
            slab_alpha=0.5,
            fill="#238443",
            .width=c(0.001,0.95),
            point_interval="mean_hdi")+
   scale_x_discrete("")+
-  scale_y_continuous("Adult size (mm)")
+  scale_y_continuous("Adult size (cephalothorax width, mm)")
 
 newdata_dispersal<-data %>% 
   select(landscape) %>% 
   distinct() %>% 
-  mutate(is.valid_dispersal=1) %>% 
-  add_epred_draws(mmod2,resp="Nrappelling",re_formula = NA)
+  mutate(valid_dispersal=1) %>% 
+  add_epred_draws(mmod2_width,resp="Ntiptoe",re_formula = NA)
 
 plot3_c<-ggplot()+
-  geom_boxplot(data=subset(data,is.valid_dispersal==1),
-               aes(landscape,N_rappelling, group=patch),col="grey50")+
-  stat_eye(data=newdata_dispersal,aes(landscape,.epred),
+  geom_boxplot(data=subset(data,valid_dispersal==1),
+               aes(landscape,N_tiptoe, group=patch),col="grey50")+
+  stat_eye(data=newdata_dispersal,
+           aes(landscape,.epred),
            slab_alpha=0.5,
            fill="#238443",
            .width=c(0.001,0.95),
            point_interval="mean_hdi")+
   scale_x_discrete("")+
-  scale_y_continuous("Dispersal (# rappelling attempts)")
+  scale_y_continuous("Dispersal (# tiptoe behaviours)")
 
 newdata_fecundity<-data %>% 
   select(landscape) %>% 
   distinct() %>% 
-  mutate(is.valid_fecundity=1,time_for_repro=1) %>% 
-  add_epred_draws(mmod2,resp="lifetimefecundity",re_formula = NA)
+  mutate(valid_fecundity=1,time_for_repro=1) %>% 
+  add_epred_draws(mmod2_width,resp="lifetimefecundity",re_formula = NA)
 
 plot3_d<-ggplot()+
-  geom_boxplot(data=subset(data,is.valid_fecundity==1),
-               aes(landscape,lifetime_fecundity/time_for_repro, group=patch),col="grey50")+
-  stat_eye(data=newdata_fecundity,aes(landscape,.epred),
+  geom_boxplot(data=subset(data,valid_fecundity==1),
+               aes(landscape,lifetime_fecundity/time_for_repro, group=patch),
+               col="grey50")+
+  stat_eye(data=newdata_fecundity,
+           aes(landscape,.epred),
            slab_alpha=0.5,
            fill="#238443",
            .width=c(0.001,0.95),
@@ -654,13 +537,15 @@ plot3_d<-ggplot()+
 newdata_longevity<-data %>% 
   select(landscape) %>% 
   distinct() %>% 
-  mutate(is.valid_longevity=1,obsgap_longevity="no") %>% 
-  add_epred_draws(mmod2,resp="adultlongevity",re_formula = NA)
+  mutate(valid_longevity=1,obsgap_longevity="no") %>% 
+  add_epred_draws(mmod2_width,resp="adultlongevity",re_formula = NA)
 
 plot3_e<-ggplot()+
-  geom_boxplot(data=subset(data,is.valid_longevity==1),
-               aes(landscape,adult_longevity, group=patch),col="grey50")+
-  stat_eye(data=newdata_longevity,aes(landscape,.epred),
+  geom_boxplot(data=subset(data,valid_longevity==1),
+               aes(landscape,adult_longevity, group=patch),
+               col="grey50")+
+  stat_eye(data=newdata_longevity,
+           aes(landscape,.epred),
            slab_alpha=0.5,
            fill="#238443",
            .width=c(0.001,0.95),
@@ -687,8 +572,8 @@ plot3_a+plot3_b+plot3_c+plot3_d+plot3_e +
 |  |Time to maturity| Body size| Dispersal| Fecundity |
 |-----|-----|-----|-----|-----|
 |Body size| -0.36 [-0.52; -0.20] |                     |                     |                     |
-| Dispersal| -0.28 [-0.45; -0.09] | 0.12 [-0.02; 0.24]   |                     |                     |
-| Fecundity| -0.28 [-0.46; -0.10] | 0.27 [0.11; 0.43]   | 0.14 [0.02; 0.28]   |                     |
-| Adult longevity| 0.01 [-0.16; 0.19]   | -0.23 [-0.36; -0.09] | 0.11 [-0.03; 0.26]  | -0.05 [-0.21; 0.11] |
+| Dispersal| -0.37 [-0.53; -0.20] | 0.13 [-0.00; 0.25]   |                     |                     |
+| Fecundity| -0.24 [-0.42; -0.05] | 0.09 [-0.13; 0.31]   | 0.13 [-0.00; 0.26]   |                     |
+| Adult longevity| 0.01 [-0.18; 0.18]   | -0.23 [-0.36; -0.08] | 0.04 [-0.10; 0.19]  | -0.07 [-0.26; 0.13] |
 
 # References

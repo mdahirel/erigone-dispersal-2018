@@ -38,8 +38,7 @@ library(matrixStats)
 library(lubridate) ## conflict with here
 library(tidyverse)
 
-## spatial stuff
-#library(ggmap) #still needed?? not sure
+## spatial stuff for Figure 1
 library(ggspatial)
 library(osmdata)
 library(sf)
@@ -65,26 +64,30 @@ options(mc.cores = 4)
 And then let's load the various data tables:
 
 ```{r load-raw-datafiles}
-## Load raw datasets
-data_females <- read_csv(here("data","erigone2018_females2.csv"),
+## the data on the females
+data_females <- read_csv(here("data","erigone2018_females.csv"),
                       col_types = cols(sex=col_character()))  
   ## only females "F" in the table, 
   ## so if col_types not given explicitly, "sex" column is parsed as logical
 
-###NOTE to round sizes to nearest 0.1mm, with clear indication that raw-raw data are "more precise" but that's just artifact from 
+## NOTE to round sizes to nearest 0.1mm, with clear indication that raw-raw data
+## are "more precise" but that's just artifact from 
 ## measurement software
 
+## the pedigree of all adults, males and females
 pedigree <- read_csv(here("data","erigone2018_pedigree.csv"))
 
+## information on each clutch (by which female? when? how many eggs?)
 data_clutches <- read_csv(here("data","erigone2018_cocoons.csv"))
 
+## information on field sites
 sites <- read_csv(here("data","erigone2018_sites.csv"))
 
+## information on male-female pairings
 pairings <- read_csv(here("data","erigone2018_pairings.csv"))
 
+## weather data
 weather <- read_csv(here("data","weather_data","pontorson_meteonet_2018.csv"))
-
-## see later for environmental data, and male data
 ```
 
 
@@ -134,8 +137,12 @@ data_females %>%
 
 ## a quick confirmation of field notes that sampling was done in sunny weather
 weather %>% 
- filter(yday(date) %in% yday(ymd(c("2018-04-12","2018-04-13","2018-05-04","2018-05-09")))) %>% 
-  mutate(was_sampling=hour(date)>9 & hour(date)<18) %>% #sampling was between 10pm and 5pm actually, so larger margin
+ filter(yday(date) %in% yday(ymd(c("2018-04-12",
+                                   "2018-04-13",
+                                   "2018-05-04",
+                                   "2018-05-09")))) %>% 
+  mutate(was_sampling=hour(date)>9 & hour(date)<18) %>% 
+  #sampling was between 10pm and 5pm, let's use 9am-6pm so larger margin
  group_by(day_of_year=yday(date),was_sampling) %>% 
  summarise(rain=sum(precip))
 
@@ -192,7 +199,7 @@ pairings$mateID %>% na.omit() %>% unique() %>% length()
 
 ### how many matings each used male was involved in?
 pairings %>% 
-  filter(is.na(mateID)==FALSE) %>% ## filter out the non-mated and the wild-caughts
+  filter(is.na(mateID)==FALSE) %>% ## filter out the non-mated and the wild
   group_by(mateID) %>% 
   summarise(N_uses_per_male=length(mateID)) %>%
   summarise(median=median(N_uses_per_male),
@@ -221,13 +228,18 @@ fecundity <- data_clutches %>%
 
 ```{r data-wrangling-2}
 data <- left_join(data_females,fecundity) %>%
-  filter(generation>0) %>% 
+  filter(generation>0) %>%  ## only the lab-born spiders!
+  ## we create the "life stage duration" variables
   mutate(time_to_maturity = (ymd(date_maturity)-ymd(date_hatching)) %>%  
            as.numeric(),
          adult_longevity = (ymd(date_death)-ymd(date_maturity)) %>% 
            as.numeric()
          ) %>% 
+  ## then we combine tiptoe leading to rappelling and others in 1 variable
   mutate(N_tiptoe = N_rappelling + N_other_tiptoe) %>% 
+  ## then we add variables that say whether or not one of the two observations that govern phase duration
+  ## were made right after a gap in observation (WE, holdays, other)
+  ## leading to potential bias
   mutate(obsgap_maturity=case_when(date_maturity=="2018-05-22" | date_egg=="2018-05-22" ~ "yes",
                              wday(date_maturity,week_start=1)==1 | wday(date_egg,week_start=1)==1 ~ "yes",
                              date_maturity=="2018-05-02" | date_egg== "2018-05-02" |
@@ -238,10 +250,8 @@ data <- left_join(data_females,fecundity) %>%
                              date_maturity=="2018-05-02" | date_death== "2018-05-02" |
                                date_maturity=="2018-05-09" | date_death=="2018-05-09" ~ "yes",
                              T~ "no"))
-## we add variables that say whether or not one of the two observations that govern phase duration
-## were made right after a gap in observation (WE, holdays, other)
-## leading to potential bias
 
+## we continue by creating indicator variables
 
 data <- data %>% 
   mutate(adult_censored = (outlived_experiment==TRUE | accidental_death==TRUE),
@@ -318,6 +328,8 @@ range(as.numeric(data$date_mating-data$date_maturity),na.rm=TRUE)
 data <- data %>% 
   mutate(animal=ID) %>% 
   left_join(pedigree)
+
+save(list=c("data"),file=here("R_output","processed_data.Rdata"))
 ```
 
 
@@ -376,7 +388,7 @@ if (file.exists(here("R_output", "mod_popsize_suppl.Rdata"))) {
 mod_pop_suppl <- brm(
   N_adult_females|rate(person_hours_on_patch)~
     landscape,family=poisson,
-  data=sites,
+  data=sites, # no subset here, we use all sites
   prior=c(
     set_prior("normal(0,1)",class="Intercept"),
     set_prior("normal(0,1)",class="b")
@@ -392,26 +404,38 @@ mod_pop_suppl <- brm(
 ## trait
 
 ```{r}
-bf_width_test<-bf(s_CT_width |mi() ~              
+bf_width_wl<-bf(s_CT_width |mi() ~              
              (1|r|ID),                        #
              family=gaussian)
 
-bf_length_test<-bf(s_CT_length |mi() ~   
+bf_length_wl<-bf(s_CT_length |mi() ~   
              (1|r|ID),                        #
              family=gaussian)
 
-prior_test<-c(
+prior_width_length<-c(
   set_prior("normal(0,1)",class="Intercept",resp=c("sCTwidth","sCTlength")),
   set_prior("normal(0,1)",class="sd",resp=c("sCTwidth","sCTlength")),
   set_prior("lkj(2)",class="cor")
 )
+```
 
-mod_test=brm(mvbf(bf_width_test+bf_length_test),
+
+```{r}
+if (file.exists(here("R_output", "mod_width_length.Rdata"))) {
+  # this if-else statement is avoid re-fitting a model if there is already one existing in R_output
+  # to override, re-run the model and re-save manually by selecting only the relevant code lines (or delete the Rdata object before relaunching this code chunk)
+  load(here("R_output", "mod_width_length.Rdata"))
+} else {
+  
+mod_width_length=brm(mvbf(bf_width_wl+bf_length_wl),
         data=data,
         iter=6000,warmup=3000,chains=4,
-        prior=prior_test,
+        prior=prior_width_length,
         seed=42,
         backend="cmdstanr")
+
+ save(list = c("mod_width_length"), file = here("R_output", "mod_width_length.Rdata"))
+}
 
 ```
 
@@ -486,10 +510,10 @@ prior_length<-c(
 
 
 ```{r}
-if (file.exists(here("R_output", "multivar_mod_1.Rdata"))) {
+if (file.exists(here("R_output", "multivar_mods_1.Rdata"))) {
   # this if-else statement is avoid re-fitting a model if there is already one existing in R_output
   # to override, re-run the model and re-save manually by selecting only the relevant code lines (or delete the Rdata object before relaunching this code chunk)
-  load(here("R_output", "multivar_mod_1.Rdata"))
+  load(here("R_output", "multivar_mods_1.Rdata"))
 } else {
   
 mmod1_width=brm(mvbf(bf_dispersal1+bf_devtime1+bf_fecundity1+bf_longevity1+bf_width1),
@@ -508,7 +532,7 @@ mmod1_length=brm(mvbf(bf_dispersal1+bf_devtime1+bf_fecundity1+bf_longevity1+bf_l
         seed=42,
         backend="cmdstanr")
 
-  save(list = c("mmod1"), file = here("R_output", "multivar_mod_1.Rdata"))
+  save(list = c("mmod1_width","mmod1_length"), file = here("R_output", "multivar_mods_1.Rdata"))
 }
 ```
 
@@ -570,10 +594,10 @@ bf_fecundity2<-bf(lifetime_fecundity|
 
 
 ```{r}
-if (file.exists(here("R_output", "multivar_mod_2.Rdata"))) {
+if (file.exists(here("R_output", "multivar_mods_2.Rdata"))) {
   # this if-else statement is avoid re-fitting a model if there is already one existing in R_output
   # to override, re-run the model and re-save manually by selecting only the relevant code lines (or delete the Rdata object before relaunching this code chunk)
-  load(here("R_output", "multivar_mod_2.Rdata"))
+  load(here("R_output", "multivar_mods_2.Rdata"))
 } else {
   
 mmod2_width=brm(mvbf(bf_dispersal2+bf_devtime2+bf_fecundity2+bf_longevity2+bf_width2),
@@ -593,9 +617,12 @@ mmod2_length=brm(mvbf(bf_dispersal2+bf_devtime2+bf_fecundity2+bf_longevity2+bf_l
         backend="cmdstanr")
 
 
-  save(list = c("mmod2"), file = here("R_output", "multivar_mod_2.Rdata"))
+  save(list = c("mmod2_width","mmod2_length"), file = here("R_output", "multivar_mods_2.Rdata"))
 }
 ```
+
+<!--TO DO ADD THE MODELS WITH RAPPELLING ONLY-->
+
 
 we find that most of the syndrome is driven by within-family variation (something that would not have been visible from the attempt at doing an animal model)
 
@@ -607,8 +634,8 @@ we find that most of the syndrome is driven by within-family variation (somethin
 
 this the code chunk for fig 1, ie the map: (to clean)
 
+First, we recode some data column from the habitat layer and the sites sampled layer so the legends are neater
 ```{r}
-
 patches_updated <- patches %>% 
          filter(!is.na(plant)) %>% 
          mutate(plant=fct_relevel(plant,c("puccinellia_dominant",
@@ -623,12 +650,15 @@ points_updated <- points %>%
                                                 "yes"="1",
                                                 "no"="0")
   )
+```
 
+then we create the figure
+```{r}
 ### a general map of western europe
 plot_1a <- ggplot() +
   geom_sf(data=coastline)+
-    geom_sf(data=points_updated[1,],pch=19,size=3)+
-  coord_sf(xlim=c(-10.854,11.074),ylim=c(41.925,55.653))+
+    geom_sf(data=points_updated[1,],pch=19,size=3)+ ##they're all gonna overlap, but it still puts a point on the overall area
+  coord_sf(xlim=c(-10.854,11.074),ylim=c(41.925,55.653))+ ## x and y limits of the map that look good-ish
   theme_bw()+
   theme(
         panel.background = element_rect(fill="lightblue"),
@@ -668,10 +698,10 @@ plot_1b <- ggplot(data = patches_updated) +
 
 ## Figure 2
 
-
-a draft of the figure
+Here we display the predicted and observed population densities (in females caught per person-hour)
 
 ```{r}
+## a new data set on which we add the model predictions
 newdata_pop<-sites %>% 
   filter(is_habitat=="y") %>% 
   select(landscape) %>% 
@@ -685,8 +715,10 @@ plot2<-ggplot()+
            fill="#238443",
            .width=c(0.001,0.95),
            point_interval="mean_hdi")+
-  geom_jitter(data=sites %>% filter(is_habitat=="y"),aes(landscape,N_adult_females/person_hours_on_patch),
-              position=position_jitter(width=0.2),pch=21,size=2,fill="white")+
+  geom_jitter(data=sites %>% filter(is_habitat=="y"),
+              aes(landscape,N_adult_females/person_hours_on_patch),
+              position=position_jitter(width=0.2),
+              pch=21,size=2,fill="white")+
   scale_x_discrete("landscape of origin")+
   scale_y_continuous("Population density (female *E. longipalpis* per person-hour)")+
   theme_bw()+
@@ -695,20 +727,23 @@ plot2<-ggplot()+
 plot2
 ```
 
+## Figure 3
 
-a draft of the figure
+Here we do the same, for the phenotypic traits
 ```{r}
 
 newdata_maturity<-data %>% 
   select(landscape) %>% 
   distinct() %>% 
-  mutate(is.valid_maturity=1, obsgap_maturity="no") %>% 
-  add_epred_draws(mmod1,resp="timetomaturity",re_formula = NA)
+  mutate(valid_maturity=1, obsgap_maturity="no") %>% 
+  add_epred_draws(mmod1_width,resp="timetomaturity",re_formula = NA)
 
 plot3_a<-ggplot()+
-  geom_boxplot(data=subset(data,is.valid_maturity==1),
-               aes(landscape,time_to_maturity, group=patch),col="grey50")+
-  stat_eye(data=newdata_maturity,aes(landscape,.epred),
+  geom_boxplot(data=subset(data,valid_maturity==1),
+               aes(landscape,time_to_maturity, group=patch),
+               col="grey50")+
+  stat_eye(data=newdata_maturity,
+           aes(landscape,.epred),
            slab_alpha=0.5,
            fill="#238443",
            .width=c(0.001,0.95),
@@ -719,13 +754,16 @@ plot3_a<-ggplot()+
 newdata_size<-data %>% 
   select(landscape) %>% 
   distinct() %>%  
-  add_epred_draws(mmod1,resp="sCTwidth",re_formula = NA) %>% 
-  mutate(.epred=(.epred*sd(data$CT_width,na.rm=TRUE))+mean(data$CT_width,na.rm=TRUE))
+  add_epred_draws(mmod1_width,resp="sCTwidth",re_formula = NA) %>% 
+  mutate(.epred=(.epred*sd(data$CT_width,na.rm=TRUE))+
+           mean(data$CT_width,na.rm=TRUE))
 # we back transform the predictions from scaled values to observed
 
 plot3_b<-ggplot()+
-  geom_boxplot(data=data,aes(landscape,CT_width, group=patch),col="grey50")+
-  stat_eye(data=newdata_size,aes(landscape,.epred),
+  geom_boxplot(data=data,
+               aes(landscape,CT_width, group=patch),col="grey50")+
+  stat_eye(data=newdata_size,
+           aes(landscape,.epred),
            slab_alpha=0.5,
            fill="#238443",
            .width=c(0.001,0.95),
@@ -736,30 +774,33 @@ plot3_b<-ggplot()+
 newdata_dispersal<-data %>% 
   select(landscape) %>% 
   distinct() %>% 
-  mutate(is.valid_dispersal=1) %>% 
-  add_epred_draws(mmod1,resp="Nrappelling",re_formula = NA)
+  mutate(valid_dispersal=1) %>% 
+  add_epred_draws(mmod1_width,resp="Ntiptoe",re_formula = NA)
 
 plot3_c<-ggplot()+
-  geom_boxplot(data=subset(data,is.valid_dispersal==1),
-               aes(landscape,N_rappelling, group=patch),col="grey50")+
-  stat_eye(data=newdata_dispersal,aes(landscape,.epred),
+  geom_boxplot(data=subset(data,valid_dispersal==1),
+               aes(landscape,N_tiptoe, group=patch),col="grey50")+
+  stat_eye(data=newdata_dispersal,
+           aes(landscape,.epred),
            slab_alpha=0.5,
            fill="#238443",
            .width=c(0.001,0.95),
            point_interval="mean_hdi")+
   scale_x_discrete("")+
-  scale_y_continuous("Dispersal (# rappelling attempts)")
+  scale_y_continuous("Dispersal (# tiptoe behaviours)")
 
 newdata_fecundity<-data %>% 
   select(landscape) %>% 
   distinct() %>% 
-  mutate(is.valid_fecundity=1,time_for_repro=1) %>% 
-  add_epred_draws(mmod1,resp="lifetimefecundity",re_formula = NA)
+  mutate(valid_fecundity=1,time_for_repro=1) %>% 
+  add_epred_draws(mmod1_width,resp="lifetimefecundity",re_formula = NA)
 
 plot3_d<-ggplot()+
-  geom_boxplot(data=subset(data,is.valid_fecundity==1),
-               aes(landscape,lifetime_fecundity/time_for_repro, group=patch),col="grey50")+
-  stat_eye(data=newdata_fecundity,aes(landscape,.epred),
+  geom_boxplot(data=subset(data,valid_fecundity==1),
+               aes(landscape,lifetime_fecundity/time_for_repro, group=patch),
+               col="grey50")+
+  stat_eye(data=newdata_fecundity,
+           aes(landscape,.epred),
            slab_alpha=0.5,
            fill="#238443",
            .width=c(0.001,0.95),
@@ -771,13 +812,15 @@ plot3_d<-ggplot()+
 newdata_longevity<-data %>% 
   select(landscape) %>% 
   distinct() %>% 
-  mutate(is.valid_longevity=1,obsgap_longevity="no") %>% 
-  add_epred_draws(mmod1,resp="adultlongevity",re_formula = NA)
+  mutate(valid_longevity=1,obsgap_longevity="no") %>% 
+  add_epred_draws(mmod1_width,resp="adultlongevity",re_formula = NA)
 
 plot3_e<-ggplot()+
-  geom_boxplot(data=subset(data,is.valid_longevity==1),
-               aes(landscape,adult_longevity, group=patch),col="grey50")+
-  stat_eye(data=newdata_longevity,aes(landscape,.epred),
+  geom_boxplot(data=subset(data,valid_longevity==1),
+               aes(landscape,adult_longevity, group=patch),
+               col="grey50")+
+  stat_eye(data=newdata_longevity,
+           aes(landscape,.epred),
            slab_alpha=0.5,
            fill="#238443",
            .width=c(0.001,0.95),
@@ -795,10 +838,7 @@ plot3_a+plot3_b+plot3_c+plot3_d+plot3_e +
 ```
 
 
-
-
-
-### the correlation tables
+# Correlation tables and other useful summaries
 
 
 ```{r}
@@ -810,8 +850,11 @@ summary_mod_pop <- mod_pop %>%
   mean_hdi()
 
 summary_mod_pop
+```
 
-summary_mmod1 <- mmod1 %>%
+
+```{r}
+summary_mmod1 <- mmod1_width %>%
   as_draws_df() %>%
   select(starts_with(c("b_", "sd_", "cor_ID", "sigma"))) %>%
   pivot_longer(everything()) %>%
@@ -826,7 +869,7 @@ summary_mmod1 %>%
   filter(substr(name,1,2)=="b_")
 
 
-summary_mmod2 <- mmod2 %>%
+summary_mmod2 <- mmod2_width %>%
   as_draws_df() %>%
   select(starts_with(c("b_", "sd_", "cor_ID","cor_MOTHER", "sigma"))) %>%
   pivot_longer(everything()) %>%
@@ -849,13 +892,13 @@ table_cor_fullIND<-summary_mmod1 %>%
   mutate(response1 = case_when(
     str_detect(name,"cor_ID__adultlongevity") ~ "Adult longevity",
     str_detect(name, "cor_ID__lifetimefecundity") ~ "Fecundity",
-    str_detect(name, "cor_ID__Nrappelling") ~ "Dispersal",
+    str_detect(name, "cor_ID__Ntiptoe") ~ "Dispersal",
     str_detect(name,"cor_ID__timetomaturity") ~ "Time to maturity",
     str_detect(name,"cor_ID__sCTwidth") ~ "Body size"),
          response2 = case_when(
     str_detect(name,"adultlongevity_Intercept$") ~ "Adult longevity",
     str_detect(name, "lifetimefecundity_Intercept$") ~ "Fecundity",
-    str_detect(name, "Nrappelling_Intercept$") ~ "Dispersal",
+    str_detect(name, "Ntiptoe_Intercept$") ~ "Dispersal",
     str_detect(name,"timetomaturity_Intercept$") ~ "Time to maturity",
     str_detect(name,"sCTwidth_Intercept$") ~ "Body size"),
   ) %>% 
@@ -869,13 +912,13 @@ table_cor_MOTHER<-summary_mmod2 %>%
   mutate(response1 = case_when(
     str_detect(name,"cor_MOTHER__adultlongevity") ~ "Adult longevity",
     str_detect(name, "cor_MOTHER__lifetimefecundity") ~ "Fecundity",
-    str_detect(name, "cor_MOTHER__Nrappelling") ~ "Dispersal",
+    str_detect(name, "cor_MOTHER__Ntiptoe") ~ "Dispersal",
     str_detect(name,"cor_MOTHER__timetomaturity") ~ "Time to maturity",
     str_detect(name,"cor_MOTHER__sCTwidth") ~ "Body size"),
          response2 = case_when(
     str_detect(name,"adultlongevity_Intercept$") ~ "Adult longevity",
     str_detect(name, "lifetimefecundity_Intercept$") ~ "Fecundity",
-    str_detect(name, "Nrappelling_Intercept$") ~ "Dispersal",
+    str_detect(name, "Ntiptoe_Intercept$") ~ "Dispersal",
     str_detect(name,"timetomaturity_Intercept$") ~ "Time to maturity",
     str_detect(name,"sCTwidth_Intercept$") ~ "Body size"),
   ) %>% 
@@ -887,13 +930,13 @@ table_cor_ID<-summary_mmod2 %>%
   mutate(response1 = case_when(
     str_detect(name,"cor_ID__adultlongevity") ~ "Adult longevity",
     str_detect(name, "cor_ID__lifetimefecundity") ~ "Fecundity",
-    str_detect(name, "cor_ID__Nrappelling") ~ "Dispersal",
+    str_detect(name, "cor_ID__Ntiptoe") ~ "Dispersal",
     str_detect(name,"cor_ID__timetomaturity") ~ "Time to maturity",
     str_detect(name,"cor_ID__sCTwidth") ~ "Body size"),
          response2 = case_when(
     str_detect(name,"adultlongevity_Intercept$") ~ "Adult longevity",
     str_detect(name, "lifetimefecundity_Intercept$") ~ "Fecundity",
-    str_detect(name, "Nrappelling_Intercept$") ~ "Dispersal",
+    str_detect(name, "Ntiptoe_Intercept$") ~ "Dispersal",
     str_detect(name,"timetomaturity_Intercept$") ~ "Time to maturity",
     str_detect(name,"sCTwidth_Intercept$") ~ "Body size"),
   ) %>% 
@@ -908,12 +951,47 @@ table_cor_MOTHER
 table_cor_ID
 ```
 
+```{r}
+varMOTHER=VarCorr(mmod2_width,summary=FALSE)$MOTHER$sd^2 %>% 
+  as_tibble() %>% 
+  mutate(draw=1:dim(.)[1]) %>% 
+  pivot_longer(-draw,values_to = "varMOTHER",names_to="trait")
+
+varID=VarCorr(mmod2_width,summary=FALSE)$ID$sd^2 %>% 
+  as_tibble() %>% 
+  mutate(draw=1:dim(.)[1])%>% 
+  pivot_longer(-draw,values_to = "varID",names_to="trait")
+
+indvarpart=left_join(varMOTHER,varID) %>% 
+  mutate(propvar=varMOTHER/(varMOTHER+varID)) %>% 
+  mutate(trait=fct_recode(factor(trait),
+                          `Dispersal`="Ntiptoe_Intercept",
+                          `Time to maturity`="timetomaturity_Intercept",
+                          `Fecundity`="lifetimefecundity_Intercept",
+                          `Adult longevity`="adultlongevity_Intercept",
+                          `Adult size` = "sCTwidth_Intercept")) 
+
+indvarpart %>% 
+  group_by(trait) %>% 
+  mean_hdi(propvar)
+
+ggplot(indvarpart)+
+  stat_halfeye(aes(x=propvar,y=trait),
+               slab_alpha=0.5,
+               fill="#238443",
+               .width=c(0.001,0.95),
+               point_interval="mean_hdi") +
+  scale_x_continuous("Proportion of within-patch individual variation explained by mother identity (latent scale)",
+                     limits=c(0,1))+
+  scale_y_discrete("Trait studied")+
+  theme_bw()
+```
 
 ### in prep for Supplementary 6: table 1a, but using the split model
 
 ```{r}
-cov_mother<- VarCorr(mmod2,summary=FALSE)$MOTHER$cov
-cov_ID <- VarCorr(mmod2,summary=FALSE)$ID$cov
+cov_mother<- VarCorr(mmod2_width,summary=FALSE)$MOTHER$cov
+cov_ID <- VarCorr(mmod2_width,summary=FALSE)$ID$cov
 
 cov_mother
 cov_ID
@@ -965,9 +1043,6 @@ print(sum_cor,n=Inf)
 library(nadiv)
 ```
 
-
-
-
 ```{r data-wrangling-pedigree}
 # we use nadiv to get the A matrix from the pedigree
 
@@ -980,17 +1055,6 @@ A<-makeA(genealogy[,1:3]) %>%  # to make the A matrix, input has to contain only
          as.matrix() #unsparsify
 ```
 
-## on errors in times esyimates
-
-other approaches that the kind I've tried are tricky
- interval censoring could work, but only with gaussian/lognormal and no ORLE
- (trying to constrain sigma to move all variance to OLRE does not work)
- (so wa cannot use it here because we want ID correlations, and we can't easily)
- using interval censoring is tricky
- not a question of poisson, same problem if we change to lognormal
- o a way to check if our imprecision on maturity bias our conclusion would be to round/floor/ceiling times in weeks
- and see if it affects our conclusions
- using metanalysis type error is tricky too
 
 
 
