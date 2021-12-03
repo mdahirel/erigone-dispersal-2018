@@ -6,196 +6,221 @@ bibliography: references.bib
 csl: council-of-science-editors-author-date.csl
 editor_options:
   chunk_output_type: console
-header-includes:
-  - \usepackage[left]{lineno}
-  - \linenumbers
-  - \renewcommand\linenumberfont{\normalfont\bfseries\small}
 ---
 
 <!--VERY IMPORTANT NOTE IF YOU WANT TO RE-KNIT OR RE-RUN THIS SUPPLEMENTARY-->
-<!-- a lot of code here assumes you've run the main code, and in particular that all objects saved while running the main code exist in the relevant folder-->
+<!-- a lot of code here assumes you've run the main code (erigone-2018_analysis), and in particular that all objects saved while running the main code exist in the relevant folder-->
 
 ```{r setup, include=FALSE}
 knitr::opts_chunk$set(echo = FALSE, eval = TRUE, message = FALSE, warning = FALSE)
 ```
-<!--note to self to check the jitter on figures to be sure that 4 or 5 patches west, 3 patches east in the "only main patches" config-->
-<!--note to self to ADD the REFS TO ADD FFS-->
 
 ```{r load-packages}
-library(arm)
-library(matrixStats)
-
 ## spatial stuff
 library(raster)
-#library(ggmap) #still needed?? not sure
-library(ggspatial)
-library(osmdata)
 library(sf)
 library(landscapemetrics)
 
-## pedigree stuff (still needed??)
-library(nadiv)
-
-library(cmdstanr) ## Stan backend
-library(brms) ## the interface we are using
+## model stuff
+library(cmdstanr)
+library(brms)
 library(tidyverse)
-library(bayesplot)
 library(tidybayes)
+
+## plotting stuff
 library(ggtext)
-library(patchwork) #plotting
-library(lubridate) ## conflict with here
+library(patchwork)
 
 library(here)
-
-options(mc.cores = 4)
 ```
-
-
 
 # Supplementary Material 1. Difference in landscape metrics between western and eastern sides
 
-```{r}
+```{r import-map-data}
 
-map_points<-st_read(here("data","erigone2018_GISlayers.gpkg"),
-                    layer="sampling_sites",
-                    quiet=TRUE)
+map_points <- st_read(here("data", "erigone2018_GISlayers.gpkg"),
+  layer = "sampling_sites",
+  quiet = TRUE
+)
 
-sites <- read_csv(here("data","erigone2018_sites.csv"))
+sites <- read_csv(here("data", "erigone2018_sites.csv"))
 
-raster_pucci <- raster(here("data","erigone2018_raster_pucci_dominant.tif"))
+raster_pucci <- raster(here("data", "erigone2018_raster_pucci_dominant.tif"))
 
-raster_pucci<-extend(raster_pucci,y=200,value=2)
-##we extend the raster in the north south direction to ensure buffers don't go beyond the landscape
+raster_pucci <- extend(raster_pucci, y = 200, value = 2)
+## we extend the raster in the north south direction to ensure buffers don't go beyond the landscape
 ## we can do it safely, north is sea and south is agricultural land, no favourable habitat there
 ## so value = 2
-points_remapped=map_points %>% 
+points_remapped <- map_points %>%
   st_transform(st_crs("EPSG:3035"))
 ```
 
-```{r}
-lmetrics=function(distance,raster_source,sampled,shape,what){
-test=sample_lsm(raster_source,
-           y=sampled,plot_id=sampled$name,
-           what=what,
-           shape=shape, ## shape circle may cause problems for clumpy see,https://github.com/r-spatialecology/landscapemetrics/issues/232
-           size=distance)%>% 
-  filter(class==1) %>% 
-  select(-c(level,class)) %>% 
-  mutate(patch=plot_id) %>% 
-  pivot_wider(names_from=metric)
+```{r function-extract-metrics}
 
-return(test)
+## this is a function to automate the estimation of landscape metrics by
+## landscapemetrics::sample_lsm across a set of distances
+## it is designed and tested to be used in a purr::map context as seen below
 
+lmetrics <- function(distance, raster_source, sampled, shape, what) {
+  values <- sample_lsm(raster_source,
+    y = sampled, plot_id = sampled$name,
+    what = what,
+    shape = shape, 
+    ## NOTE: shape = "circle" may cause problems for clumpy 
+    ## see https://github.com/r-spatialecology/landscapemetrics/issues/232
+    ## so use shape = "square" there maybe
+    size = distance
+  ) %>%
+    filter(class == 1) %>%  ## arbitrarily hard-coded for this specific script, would need to be changed and/or moved to input for re-uses
+    select(-c(level, class)) %>%
+    mutate(patch = plot_id) %>%
+    pivot_wider(names_from = metric)
+
+  return(values)
 }
 ```
 
-```{r}
-test=tibble(dist=c(1:20)*100,index=1:20)  %>% 
-  group_by(dist) %>% 
-  nest(dist=dist) %>% 
-  mutate(pland=map(.x=dist,
-                   .f=~.x$dist %>% 
-                     lmetrics(distance=., 
-                              raster_source=raster_pucci,
-                              sampled=points_remapped,
-                              what="lsm_c_pland",shape="circle")),
-         psize=map(.x=dist,
-                   .f=~.x$dist %>% 
-                     lmetrics(distance=., 
-                              raster_source=raster_pucci,
-                              sampled=points_remapped,
-                              what=c("lsm_c_area_mn","lsm_c_gyrate_mn"),shape="circle")),
-         lmetrics=map(.x=dist,
-                      .f=~.x$dist %>% 
-                        lmetrics(distance=., 
-                                 raster_source=raster_pucci,
-                                 sampled=points_remapped,
-                                 what="lsm_c_clumpy",shape="square")))
-##based on tbale 2 in wang MEE if we want metrics independent from habitat loss
-##we can use PAFRAC, the core areas metrics, 
+```{r extract-landscape-metrics}
+landscape_data <- tibble(dist = c(1:20) * 100, index = 1:20) %>%
+  group_by(dist) %>%
+  nest(dist = dist) %>%
+  mutate(
+    pland = map(
+      .x = dist,
+      .f = ~ .x$dist %>%
+        lmetrics(
+          distance = .,
+          raster_source = raster_pucci,
+          sampled = points_remapped,
+          what = "lsm_c_pland", shape = "circle"
+        )
+    ),
+    psize = map(
+      .x = dist,
+      .f = ~ .x$dist %>%
+        lmetrics(
+          distance = .,
+          raster_source = raster_pucci,
+          sampled = points_remapped,
+          what = c("lsm_c_area_mn", "lsm_c_gyrate_mn"), shape = "circle"
+        )
+    ),
+    lmetrics = map(
+      .x = dist,
+      .f = ~ .x$dist %>%
+        lmetrics(
+          distance = .,
+          raster_source = raster_pucci,
+          sampled = points_remapped,
+          what = "lsm_c_clumpy", shape = "square"
+        )
+    )
+  )
+## Why did we choose these metrics specifically?
+## PLAND is straightforward and is about habitat amount
+## patch area and radius of gyration are about individual patch size
+## which may help determine whethere or not the average disperser lands in its patch or outside of it
+## For fragmentation/aggregation, the choice is a bit more complex
+## Based on Table 2 in Wang et al. (2014) MEE (doi: 10.1111/2041-210X.12198) if we want fragmentation metrics independent from habitat loss
+## our choice is limited: we can either use PAFRAC, the core areas metrics,
 ## prox_cv, econ_am or teci, and clumpy
-#PAFRAC is a nono because too low number of patches, econm_am or teci not relevant because
-## denote edge effects, so need to specify a contrast weight to edge
-## prox_cv is defined at the patch level, so problematic when only one small patch alone in the buffer
-## core areas: my pixels are 10m, my spider 4mm, not sure how to define a edge depth??
-## so seems like clumpy only?? (OK with me)
-
+## PAFRAC is a no-no because too low number of patches, econ_am or teci not relevant because
+## denote edge effects, so would need to specify a contrast weight to edge
+## core areas metrics: my pixels are 10m, my spider 4mm, not sure how to define a edge depth??
+## prox_cv is defined at the patch level, so problematic in cases with only one small patch alone in the buffer
+## so we chose CLUMPY
 ```
 
 Generally speaking and (mostly) independently of the spatial scale considered, *Puccinellia maritima*-dominated lawns, the favourable habitat for *E. longipalpis*, were more abundant around sampling sites on the western side (**Figure S1.1**) than on the eastern one. Individual meadow patches were also on average bigger (**Figures S1.2 and S1.3**), and *Puccinellia maritima* meadow pixels were typically more aggregated than on the eastern side (based on the Clumpiness Index; **Figure S1.4**). We used the Clumpiness index to examine habitat fragmentation *sensu stricto* because, based on @wangMeasuringHabitatFragmentation2014, it is one of the few commonly available metrics that is mostly independent of habitat abundance.
 
-```{r, fig.dim = c(4, 3)}
-test %>% 
-  unnest(pland) %>% unnest(dist) %>% left_join(sites) %>% 
-  mutate(landscape=paste("landscape =", landscape)) %>% 
-  mutate(landscape=fct_relevel(factor(landscape),
-                               "landscape = west","landscape = east")) %>% 
-  filter(is_habitat=="y") %>% 
-  ggplot()+
-  geom_line(aes(dist,pland,group=patch,col=landscape))+
-  geom_point(aes(dist,pland,group=patch,col=landscape)) + 
-  scale_x_continuous("distance (buffer radius, m)")+
-  scale_y_continuous(" % of favourable habitat")+
-  scale_color_manual(values=c("#f1a340","#998ec3"),guide="none")+
-  theme_bw()+
-  facet_wrap(~landscape)+
-  theme(axis.title.y=element_markdown())
+```{r fig-s1-1, fig.dim = c(4, 3)}
+landscape_data %>%
+  unnest(pland) %>%
+  unnest(dist) %>%
+  left_join(sites) %>%
+  mutate(landscape = paste("landscape =", landscape)) %>%
+  mutate(landscape = fct_relevel(
+    factor(landscape),
+    "landscape = west", "landscape = east"
+  )) %>%
+  filter(is_habitat == "y") %>%
+  ggplot() +
+  geom_line(aes(dist, pland, group = patch, col = landscape)) +
+  geom_point(aes(dist, pland, group = patch, col = landscape)) +
+  scale_x_continuous("distance (buffer radius, m)") +
+  scale_y_continuous(" % of favourable habitat") +
+  scale_color_manual(values = c("#f1a340", "#998ec3"), guide = "none") +
+  theme_bw() +
+  facet_wrap(~landscape) +
+  theme(axis.title.y = element_markdown())
 ```
 
 **Figure S1.1.** Proportion of land and sea cover occupied by favourable habitat (i.e. *Puccinellia maritima*-dominated lawns) within a given radius of each sampling site, as a function of landscape. Each line represents one sampling site where *Erigone longipalpis* were found. Estimates are made using the R package `landscapemetrics` [@hesselbarthLandscapemetricsOpensourceTool2019] on rasters with a pixel size 10 by 10 m.
 
-```{r, fig.dim = c(4, 3)}
-test %>% 
-  unnest(psize) %>% unnest(dist) %>% left_join(sites) %>% 
-  mutate(landscape=paste("landscape =", landscape)) %>% 
-  mutate(landscape=fct_relevel(factor(landscape),
-                               "landscape = west","landscape = east")) %>% 
-  filter(is_habitat=="y") %>% 
-  ggplot()+
-  geom_line(aes(dist,area_mn,group=patch,col=landscape))+ ##area is estimated in ha
-  geom_point(aes(dist,area_mn,group=patch,col=landscape)) + 
-  scale_x_continuous("distance (buffer radius, m)")+
-  scale_y_continuous("mean patch area (ha)")+
-  scale_color_manual(values=c("#f1a340","#998ec3"),guide="none")+
-  theme_bw()+
+```{r fig-s1-2, fig.dim = c(4, 3)}
+landscape_data %>%
+  unnest(psize) %>%
+  unnest(dist) %>%
+  left_join(sites) %>%
+  mutate(landscape = paste("landscape =", landscape)) %>%
+  mutate(landscape = fct_relevel(
+    factor(landscape),
+    "landscape = west", "landscape = east"
+  )) %>%
+  filter(is_habitat == "y") %>%
+  ggplot() +
+  geom_line(aes(dist, area_mn, group = patch, col = landscape)) + ## area is estimated in ha
+  geom_point(aes(dist, area_mn, group = patch, col = landscape)) +
+  scale_x_continuous("distance (buffer radius, m)") +
+  scale_y_continuous("mean patch area (ha)") +
+  scale_color_manual(values = c("#f1a340", "#998ec3"), guide = "none") +
+  theme_bw() +
   facet_wrap(~landscape)
 ```
 
 **Figure S1.2.** Mean patch area (*Puccinellia maritima*-dominated lawns) as a function of landscape, within circular buffers of varying radius around each sampling site. Each line represents one sampling site where *Erigone longipalpis* were found. Estimates are made using the R package `landscapemetrics` [@hesselbarthLandscapemetricsOpensourceTool2019] on rasters with a pixel size 10 by 10 m. Note that patches may be truncated by the buffer window.
 
-```{r, fig.dim = c(4, 3)}
-test %>% 
-  unnest(psize) %>% unnest(dist) %>% left_join(sites) %>% 
-  mutate(landscape=paste("landscape =", landscape)) %>% 
-  mutate(landscape=fct_relevel(factor(landscape),
-                               "landscape = west","landscape = east")) %>% 
-  filter(is_habitat=="y") %>% 
-  ggplot()+
-  geom_line(aes(dist,gyrate_mn,group=patch,col=landscape))+ ##area is estimated in ha
-  geom_point(aes(dist,gyrate_mn,group=patch,col=landscape)) + 
-  scale_x_continuous("distance (buffer radius, m)")+
-  scale_y_continuous("average radius of gyration (GYRATE, m)")+
-  scale_color_manual(values=c("#f1a340","#998ec3"),guide="none")+
-  theme_bw()+
+```{r fig-s1-3, fig.dim = c(4, 3)}
+landscape_data %>%
+  unnest(psize) %>%
+  unnest(dist) %>%
+  left_join(sites) %>%
+  mutate(landscape = paste("landscape =", landscape)) %>%
+  mutate(landscape = fct_relevel(
+    factor(landscape),
+    "landscape = west", "landscape = east"
+  )) %>%
+  filter(is_habitat == "y") %>%
+  ggplot() +
+  geom_line(aes(dist, gyrate_mn, group = patch, col = landscape)) +
+  geom_point(aes(dist, gyrate_mn, group = patch, col = landscape)) +
+  scale_x_continuous("distance (buffer radius, m)") +
+  scale_y_continuous("average radius of gyration (GYRATE, m)") +
+  scale_color_manual(values = c("#f1a340", "#998ec3"), guide = "none") +
+  theme_bw() +
   facet_wrap(~landscape)
 ```
 
 **Figure S1.3.** Mean radius of gyration for *Puccinellia maritima*-dominated lawns (i.e. the mean distance between a patch pixel and its corresponding patch centroid) as a function of landscape, within circular buffers of varying radius around each sampling site. Each line represents one sampling site where *Erigone longipalpis* were found. Estimates are made using the R package `landscapemetrics` [@hesselbarthLandscapemetricsOpensourceTool2019] on rasters with a pixel size 10 by 10 m. Note that patches may be truncated by the buffer window.
 
-```{r, fig.dim = c(4, 3)}
-test %>% 
-  unnest(lmetrics) %>% unnest(dist) %>% left_join(sites) %>% 
-  mutate(landscape=paste("landscape =", landscape)) %>% 
-  mutate(landscape=fct_relevel(factor(landscape),
-                               "landscape = west","landscape = east")) %>% 
-  filter(is_habitat=="y") %>% 
-  ggplot()+
-  geom_line(aes(dist,clumpy,group=patch,col=landscape))+
-  geom_point(aes(dist,clumpy,group=patch,col=landscape)) + 
-  scale_x_continuous("distance (square side length/2, m)")+
-  scale_y_continuous("Clumpiness index (CLUMPY)")+
-  scale_color_manual(values=c("#f1a340","#998ec3"),guide="none")+
-  theme_bw()+
+```{r fig-s1-4, fig.dim = c(4, 3)}
+landscape_data %>%
+  unnest(lmetrics) %>%
+  unnest(dist) %>%
+  left_join(sites) %>%
+  mutate(landscape = paste("landscape =", landscape)) %>%
+  mutate(landscape = fct_relevel(
+    factor(landscape),
+    "landscape = west", "landscape = east"
+  )) %>%
+  filter(is_habitat == "y") %>%
+  ggplot() +
+  geom_line(aes(dist, clumpy, group = patch, col = landscape)) +
+  geom_point(aes(dist, clumpy, group = patch, col = landscape)) +
+  scale_x_continuous("distance (square side length/2, m)") +
+  scale_y_continuous("Clumpiness index (CLUMPY)") +
+  scale_color_manual(values = c("#f1a340", "#998ec3"), guide = "none") +
+  theme_bw() +
   facet_wrap(~landscape)
 ```
 
@@ -203,39 +228,44 @@ test %>%
 
 # Supplementary Material 2. Relationship between the numbers of lab-born spiders and wild-caught spiders sourced from a patch
 
-```{r, fig.dim = c(4, 4.5)}
-count_females <- read_csv(here("data","erigone2018_females.csv"),
-                      col_types = cols(sex=col_character())) %>%  
-  mutate(wild=generation ==0) %>%
-  group_by(wild, patch) %>% 
-  count() %>% 
-  ungroup() %>% 
-  mutate(wild=paste0("wild_",wild)) %>% 
-  pivot_wider(names_from=wild,values_from=n) %>% 
-  mutate(wild_FALSE=replace_na(wild_FALSE,0)) %>% 
+If the lab-born adult spiders we tested were selected randomly from the pool of just-maturing adults, then their distribution with respect to their "ancestral" patch should reflect the distribution of the wild caught spiders with respect to patch (unless there are substantial among-patch variation in fecundity, and we can see in main text **Figure 3** that there are not). We checked that assumption (**Figure S2.1**) and it seems to hold.
+
+```{r fig-s2-1, fig.dim = c(4, 4.5)}
+count_females <- read_csv(here("data", "erigone2018_females.csv"),
+  col_types = cols(sex = col_character())
+) %>%
+  mutate(wild = generation == 0) %>%
+  group_by(wild, patch) %>%
+  count() %>%
+  ungroup() %>%
+  mutate(wild = paste0("wild_", wild)) %>%
+  pivot_wider(names_from = wild, values_from = n) %>%
+  mutate(wild_FALSE = replace_na(wild_FALSE, 0)) %>%
   rename(n_females_lab = wild_FALSE, n_females_wild = wild_TRUE)
 
-count_males <- read_csv(here("data","erigone2018_males.csv"),
-                      col_types = cols(sex=col_character())) %>%  
-  filter(generation>0) %>%
-  group_by(patch) %>% 
-  count() %>% 
-  rename(n_males_lab=n)
+count_males <- read_csv(here("data", "erigone2018_males.csv"),
+  col_types = cols(sex = col_character())
+) %>%
+  filter(generation > 0) %>%
+  group_by(patch) %>%
+  count() %>%
+  rename(n_males_lab = n)
 
-count_spiders <- left_join(count_females,count_males) %>% 
-  mutate(n_males_lab=replace_na(n_males_lab,0))
+count_spiders <- left_join(count_females, count_males) %>%
+  mutate(n_males_lab = replace_na(n_males_lab, 0))
 
-count_spiders %>% 
-  ggplot()+
-  geom_point(aes(n_females_wild/sum(n_females_wild),(n_males_lab+n_females_lab)/sum(n_females_lab+n_males_lab)),size=2)+
-  geom_abline(intercept=0,slope=1,lty=2)+
-  scale_x_continuous("proportion of all wild females coming from patch")+
-  scale_y_continuous("proportion of all lab-born adults descending from patch")+
+count_spiders %>%
+  ggplot() +
+  geom_point(aes(n_females_wild / sum(n_females_wild), 
+                 (n_males_lab + n_females_lab) / sum(n_females_lab + n_males_lab)), 
+             size = 2) +
+  geom_abline(intercept = 0, slope = 1, lty = 2) +
+  scale_x_continuous("proportion of all wild females coming from patch") +
+  scale_y_continuous("proportion of all lab-born adults descending from patch") +
   theme_bw()
-
 ```
 
-**Figure S2.1.** Relationship between the relative number of female spiders caught in a patch and the corresponding number of lab-born adults kept. The dashed line corresponds to y = x. Note that a similar pattern is found whether the variable on the y-axis is "all lab-born adult spiders" or only the female lab-born spiders.
+**Figure S2.1.** Relationship between the relative number of female spiders caught in a patch and the corresponding number of lab-born adults kept. The dashed line corresponds to $y = x$. Note that a similar pattern is found whether the variable on the y-axis is "all lab-born adult spiders" or only the female lab-born spiders.
 
 # Supplementary Material 3. Detailed description of statistical models
 
@@ -243,10 +273,10 @@ count_spiders %>%
 
 The number of spiders $N_{p}$ caught in patch $p$ was analysed using the following model:
 $$
-N_{p} \sim \mathrm{Poisson}(\lambda_{[N]} \times t_{p}),
+N_{p} \sim \mathrm{Poisson}(\lambda_{[N]p} \times t_{p}),
 $$
 $$
-\log(\lambda_{[N]})= \beta_{0[N]} + \beta_{1[N]} \times x_{p},
+\log(\lambda_{[N]p})= \beta_{0[N]} + \beta_{1[N]} \times x_{p},
 $$
 with $t_p$ being an offset corresponding to the patch-specific sampling effort (in person-hours), and $x_p$ a binary variable denoting the landscape to which the patch $p$ belongs (0: the western, more continuous landscape; 1: the eastern, more fragmented landscape). We used weakly informative priors as suggested by @mcelreathStatisticalRethinkingBayesian2020, namely $\mathrm{Normal}(0,1)$ for both the intercept $\beta_{0}$ and the landscape effect $\beta_{1}$.
 
@@ -340,7 +370,7 @@ $$
 \end{bmatrix}.
 $$
 
-Priors for fixed effects $\beta$ are the same as in the abundance model ($\mathrm{Normal}(0,1)$) except for the intercepts of the time to maturity and longevity submodels. For these, priors were shifted to $\mathrm{Normal}(3.4,1)$ based on knowledge that typical development times and adult longevity in *Erigone* are on the order of 30 days (i.e. $\simeq \exp(3.4)$) [@bonteThermalConditionsJuvenile2008; @mestreFoodStressJuvenile2012]. We used $\mathrm{Half-Normal(0,1)}$ priors for all standard deviations $\sigma$ (including the residual SD $\sigma_{r}$ for the size submodel), and a $\mathrm{LKJCorr}(3)$ prior for the correlation matrix $R$ of individual-level random effects. Note that our LKJ prior is narrower than the one used in @mcelreathStatisticalRethinkingBayesian2020 ($\mathrm{LKJCorr}(2)$); in effect this penalizes against strong correlations (i.e. against our hypotheses of interest) unless support from the data is substantial.
+Priors for fixed effects $\beta$ are the same as in the abundance model ($\mathrm{Normal}(0,1)$) except for the intercepts of the time to maturity and longevity submodels. For these, priors were shifted to $\mathrm{Normal}(3.4,1)$ based on knowledge that typical development times and adult longevity in *Erigone* are on the order of 30 days (i.e. $\simeq \exp(3.4)$) [@bonteThermalConditionsJuvenile2008; @mestreFoodStressJuvenile2012]. We used $\mathrm{Half-Normal(0,1)}$ priors for all standard deviations $\sigma$ (including the residual SD $\sigma_{r}$ for the size submodel), and a $\mathrm{LKJCorr}(3)$ prior for the correlation matrix $R$ of individual-level random effects. Note that our LKJ prior is narrower than the one used in @mcelreathStatisticalRethinkingBayesian2020 ($\mathrm{LKJCorr}(2)$); in effect this penalizes against strong correlations (i.e. *against our hypotheses of interest*) unless support from the data is substantial.
  
 ## Splitting among- and within-family correlations
 
@@ -424,25 +454,33 @@ $$
 # Supplementary Material 4. Effect of landscape of origin on abundance, revisited
 
 
-```{r, fig.dim = c(4, 4.5)}
+```{r fig-s4-1, fig.dim = c(4, 4.5)}
+## this is a copy of the code for main text Figure 2, adapted to the model using all patches
 load(here("R_output", "mod_popsize_suppl.Rdata"))
 
-newdata_pop<-tibble(landscape=factor(c("west","east"),
-                                     levels=c("west","east")),
-                    person_hours_on_patch=1) %>% 
+newdata_pop <- tibble(
+  landscape = factor(c("west", "east"),
+    levels = c("west", "east")
+  ),
+  person_hours_on_patch = 1
+) %>%
   add_epred_draws(mod_pop_suppl)
-  
-plot2<-ggplot()+
-  stat_eye(data=newdata_pop,aes(landscape,.epred),
-           slab_alpha=0.5,
-           fill="#238443",
-           .width=c(0.001,0.95),
-           point_interval="mean_hdi")+
-  geom_jitter(data=sites,aes(landscape,N_adult_females/person_hours_on_patch),
-              position=position_jitter(width=0.2),pch=21,size=2,fill="white")+
-  scale_x_discrete("landscape of origin")+
-  scale_y_continuous("Population density (female *E. longipalpis* per person-hour)")+
-  theme_bw()+
+
+plot2 <- ggplot() +
+  stat_eye(
+    data = newdata_pop, aes(landscape, .epred),
+    slab_alpha = 0.5,
+    fill = "#238443",
+    .width = c(0.001, 0.95),
+    point_interval = "mean_hdi"
+  ) +
+  geom_jitter(
+    data = sites, aes(landscape, N_adult_females / person_hours_on_patch),
+    position = position_jitter(width = 0.2), pch = 21, size = 2, fill = "white"
+  ) +
+  scale_x_discrete("landscape of origin") +
+  scale_y_continuous("Population density (female *E. longipalpis* per person-hour)") +
+  theme_bw() +
   theme(axis.title.y = element_markdown())
 
 plot2
@@ -453,104 +491,125 @@ plot2
 
 # Supplementary Material 5. Effect of landscape of origin on phenotypic traits, revisited
 
-```{r, fig.dim = c(7,6)}
-load(here("R_output","processed_data.Rdata"))
+```{r fig-s5-1, fig.dim = c(7,6)}
+## this is a copy of the code for main text Figure 3, adapted to the model partitioning individual and family variance
+load(here("R_output", "processed_data.Rdata"))
 load(here("R_output", "multivar_mods_2.Rdata"))
 
-newdata_maturity<-data %>% 
-  select(landscape) %>% 
-  distinct() %>% 
-  mutate(valid_maturity=1, obsgap_maturity="no") %>% 
-  add_epred_draws(mmod2_width,resp="timetomaturity",re_formula = NA)
+newdata_maturity <- data %>%
+  select(landscape) %>%
+  distinct() %>%
+  mutate(valid_maturity = 1, obsgap_maturity = "no") %>%
+  add_epred_draws(mmod2_width, resp = "timetomaturity", re_formula = NA)
 
-plot3_a<-ggplot()+
-  geom_boxplot(data=subset(data,valid_maturity==1),
-               aes(landscape,time_to_maturity, group=patch),
-               col="grey50")+
-  stat_eye(data=newdata_maturity,
-           aes(landscape,.epred),
-           slab_alpha=0.5,
-           fill="#238443",
-           .width=c(0.001,0.95),
-           point_interval="mean_hdi")+
-  scale_x_discrete("")+
+plot3_a <- ggplot() +
+  geom_boxplot(
+    data = subset(data, valid_maturity == 1),
+    aes(landscape, time_to_maturity, group = patch),
+    col = "grey50"
+  ) +
+  stat_eye(
+    data = newdata_maturity,
+    aes(landscape, .epred),
+    slab_alpha = 0.5,
+    fill = "#238443",
+    .width = c(0.001, 0.95),
+    point_interval = "mean_hdi"
+  ) +
+  scale_x_discrete("") +
   scale_y_continuous("Age at maturity (days)")
 
-newdata_size<-data %>% 
-  select(landscape) %>% 
-  distinct() %>%  
-  add_epred_draws(mmod2_width,resp="sCTwidth",re_formula = NA) %>% 
-  mutate(.epred=(.epred*sd(data$CT_width,na.rm=TRUE))+
-           mean(data$CT_width,na.rm=TRUE))
+newdata_size <- data %>%
+  select(landscape) %>%
+  distinct() %>%
+  add_epred_draws(mmod2_width, resp = "sCTwidth", re_formula = NA) %>%
+  mutate(.epred = (.epred * sd(data$CT_width, na.rm = TRUE)) +
+    mean(data$CT_width, na.rm = TRUE))
 # we back transform the predictions from scaled values to observed
 
-plot3_b<-ggplot()+
-  geom_boxplot(data=data,
-               aes(landscape,CT_width, group=patch),col="grey50")+
-  stat_eye(data=newdata_size,
-           aes(landscape,.epred),
-           slab_alpha=0.5,
-           fill="#238443",
-           .width=c(0.001,0.95),
-           point_interval="mean_hdi")+
-  scale_x_discrete("")+
+plot3_b <- ggplot() +
+  geom_boxplot(
+    data = data,
+    aes(landscape, CT_width, group = patch), col = "grey50"
+  ) +
+  stat_eye(
+    data = newdata_size,
+    aes(landscape, .epred),
+    slab_alpha = 0.5,
+    fill = "#238443",
+    .width = c(0.001, 0.95),
+    point_interval = "mean_hdi"
+  ) +
+  scale_x_discrete("") +
   scale_y_continuous("Adult size (cephalothorax width, mm)")
 
-newdata_dispersal<-data %>% 
-  select(landscape) %>% 
-  distinct() %>% 
-  mutate(valid_dispersal=1) %>% 
-  add_epred_draws(mmod2_width,resp="Ntiptoe",re_formula = NA)
+newdata_dispersal <- data %>%
+  select(landscape) %>%
+  distinct() %>%
+  mutate(valid_dispersal = 1) %>%
+  add_epred_draws(mmod2_width, resp = "Ntiptoe", re_formula = NA)
 
-plot3_c<-ggplot()+
-  geom_boxplot(data=subset(data,valid_dispersal==1),
-               aes(landscape,N_tiptoe, group=patch),col="grey50")+
-  stat_eye(data=newdata_dispersal,
-           aes(landscape,.epred),
-           slab_alpha=0.5,
-           fill="#238443",
-           .width=c(0.001,0.95),
-           point_interval="mean_hdi")+
-  scale_x_discrete("")+
+plot3_c <- ggplot() +
+  geom_boxplot(
+    data = subset(data, valid_dispersal == 1),
+    aes(landscape, N_tiptoe, group = patch), col = "grey50"
+  ) +
+  stat_eye(
+    data = newdata_dispersal,
+    aes(landscape, .epred),
+    slab_alpha = 0.5,
+    fill = "#238443",
+    .width = c(0.001, 0.95),
+    point_interval = "mean_hdi"
+  ) +
+  scale_x_discrete("") +
   scale_y_continuous("Dispersal (# tiptoe behaviours)")
 
-newdata_fecundity<-data %>% 
-  select(landscape) %>% 
-  distinct() %>% 
-  mutate(valid_fecundity=1,time_for_repro=1) %>% 
-  add_epred_draws(mmod2_width,resp="lifetimefecundity",re_formula = NA)
+newdata_fecundity <- data %>%
+  select(landscape) %>%
+  distinct() %>%
+  mutate(valid_fecundity = 1, time_for_repro = 1) %>%
+  add_epred_draws(mmod2_width, resp = "lifetimefecundity", re_formula = NA)
 
-plot3_d<-ggplot()+
-  geom_boxplot(data=subset(data,valid_fecundity==1),
-               aes(landscape,lifetime_fecundity/time_for_repro, group=patch),
-               col="grey50")+
-  stat_eye(data=newdata_fecundity,
-           aes(landscape,.epred),
-           slab_alpha=0.5,
-           fill="#238443",
-           .width=c(0.001,0.95),
-           point_interval="mean_hdi")+
-  scale_x_discrete("landscape of origin")+
+plot3_d <- ggplot() +
+  geom_boxplot(
+    data = subset(data, valid_fecundity == 1),
+    aes(landscape, lifetime_fecundity / time_for_repro, group = patch),
+    col = "grey50"
+  ) +
+  stat_eye(
+    data = newdata_fecundity,
+    aes(landscape, .epred),
+    slab_alpha = 0.5,
+    fill = "#238443",
+    .width = c(0.001, 0.95),
+    point_interval = "mean_hdi"
+  ) +
+  scale_x_discrete("landscape of origin") +
   scale_y_continuous("Fecundity (# offspring/day)")
 
 
-newdata_longevity<-data %>% 
-  select(landscape) %>% 
-  distinct() %>% 
-  mutate(valid_longevity=1,obsgap_longevity="no") %>% 
-  add_epred_draws(mmod2_width,resp="adultlongevity",re_formula = NA)
+newdata_longevity <- data %>%
+  select(landscape) %>%
+  distinct() %>%
+  mutate(valid_longevity = 1, obsgap_longevity = "no") %>%
+  add_epred_draws(mmod2_width, resp = "adultlongevity", re_formula = NA)
 
-plot3_e<-ggplot()+
-  geom_boxplot(data=subset(data,valid_longevity==1),
-               aes(landscape,adult_longevity, group=patch),
-               col="grey50")+
-  stat_eye(data=newdata_longevity,
-           aes(landscape,.epred),
-           slab_alpha=0.5,
-           fill="#238443",
-           .width=c(0.001,0.95),
-           point_interval="mean_hdi")+
-  scale_x_discrete("")+
+plot3_e <- ggplot() +
+  geom_boxplot(
+    data = subset(data, valid_longevity == 1),
+    aes(landscape, adult_longevity, group = patch),
+    col = "grey50"
+  ) +
+  stat_eye(
+    data = newdata_longevity,
+    aes(landscape, .epred),
+    slab_alpha = 0.5,
+    fill = "#238443",
+    .width = c(0.001, 0.95),
+    point_interval = "mean_hdi"
+  ) +
+  scale_x_discrete("") +
   scale_y_continuous("Adult longevity (days)")
 
 
@@ -558,7 +617,7 @@ layout <- "
 AB#
 CDE
 "
-plot3_a+plot3_b+plot3_c+plot3_d+plot3_e + 
+plot3_a + plot3_b + plot3_c + plot3_d + plot3_e +
   plot_layout(design = layout) & theme_bw()
 ```
 
@@ -567,7 +626,7 @@ plot3_a+plot3_b+plot3_c+plot3_d+plot3_e +
 # Supplementary Material 6: overall within-patch, individual-level correlations among traits, based on the "split variance" model
 
 **Supplementary Table S6.1.** Means and 95% Higher Posterior Density intervals for the overall individual-level correlations among traits, based on the model where individual-level (co-)variance is split into among- and within-family levels (compare with **Table 1a** in the main text, which is based on the model where individual-level variation is **not** split into its among- and within-family components).
-<!--see main code for the source info for this table-->
+<!--the table is filled manually here for convenience, see at the end of the main code for how to get these correlations-->
 
 |  |Time to maturity| Body size| Dispersal| Fecundity |
 |-----|-----|-----|-----|-----|
