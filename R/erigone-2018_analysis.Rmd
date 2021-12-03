@@ -300,7 +300,7 @@ fecundity <- data_clutches %>%
   mutate(
     lifetime_fecundity = replace_na(lifetime_fecundity, 0), # to give these females their proper value
     N_cocoons = replace_na(N_cocoons, 0),
-    N_cocoons_hatched = sum(Cocoon_hatched)
+    N_cocoons_hatched = replace_na(N_cocoons_hatched,0)
   )
 ```
 
@@ -648,7 +648,7 @@ if (file.exists(here("R_output", "multivar_mods_1.Rdata"))) {
     data = data,
     iter = 6000, warmup = 3000, chains = 4,
     prior = c(prior_length, prior),
-    control = list(adapt_delta = 0.99, max_treedepth = 15),
+    control = list(adapt_delta = 0.995, max_treedepth = 15),
     seed = 42,
     backend = "cmdstanr"
   )
