@@ -22,9 +22,20 @@ The aims of this study were:
 
 - (i) to determine whether *Erigone longipalpis* spiders from a fragmented (sub)landscape evolve different traits than spiders from a more continuous landscape with more habitat remnants.
 
-- (ii) to determine whether dispersal and life history traits were correlated in syndromes, and whether evolutionary changes seen in (ii) were constrained by this syndromes
+- (ii) to determine whether dispersal and life history traits were correlated in syndromes, and whether evolutionary changes seen in (ii) were constrained by/aligned with this syndrome
 
 - (iii) to split phenotypic covariation into its genetic, maternal and environmental components. In the end however, this had to be scaled down to a more modest "split into within- and among-family components" due to relatively low N and sparse pedigree.
+
+Our choice of life history metrics is inspired by (but not identical to) Healy et al 2019 NEE (doi: 10.1038/s41559-019-0938-7):
+
+- Age at maturity
+- Adult longevity
+- Fecundity
+
+To answer our questions, we add to that:
+
+- body size information
+- dispersal information (specifically about pre-dispersal behaviours).
 
 # Starters and data wrangling
 
@@ -89,18 +100,61 @@ weather <- read_csv(here("data","weather_data","pontorson_meteonet_2018.csv"))
 
 What do we have in there?:
 
-<!--ADD DESCRIPTION OF DATA-->
+`data_females` is our main dataset and contains the following variables:
 
-our choice of life history metrics is inspired (but not 100% identical) to Healy et al 2019 NEE:
+- `ID`: unique ID of the spider
+- `landscape`: whether the spider (for wild-caught) or its (grand)mother (for the lab-grown) were caught in the western or eastern landscape (respectively less and more fragmented *sensu lato*)
+- `patch`: unique ID of the source patch
+- `sex`: F for females for every spider in this dataset, but the column is created because a dataset compiling male data (not used here) is present in the data folder
+- `captured_on`: if the spider is a wild one, information on its capture date
+- `date_mating`: if the spider is a lab-born one and survived to mating, information about mating date, which is also the date of the dispersal test
+- `date_death`: more accurately, date the spider was last seen alive (see below)
+- `outlived_experiment`: an indicator telling whether spiders were still alive at the end of the experiment
+- `accidental_death`: another indicator telling if the spider was killed accidentally (i.e. due to experimenter clumsiness)
+- `natural_death_before_dispersal`: another indicator to track the spiders that died before even being tested for dispersal
+- `generation`: wild-caught spiders are generation 0, the lab-born ones are G1 and 2
+- `date_egg`: date the egg (clutch) that gave this spider was first detected
+- `date_hatching`: date this spider hatched (or at least hatching was detected)
+- `date_maturity`: same as above, with sexual maturity
+- `has.tiptoed`: a binary indicator telling if the spider exhibited at least one pre-dispersal behaviour
+- `N_rappelling`: Number of times the spider exhibited rappelling-like behaviour, i.e. spinning a line, attaching it to a stick, and climbing on it while it's floating in the wind. Note that these might also be rafting behaviour (*sensu* Bell 2005), i.e. still be pre-long-distance-dispersal behaviours. Tiptoes immediately followed by rappelling-like behaviour are counted as 1 behaviour      
+- `N_other_tiptoe`: Number of times the spider exhibited tiptoe behaviour (standing on the top of a stick and producing a slik line) which are *not* immediately followed by a rappelling-like behaviour
+- `CT_width1`, `CT_width2`, `CT_length1`, `CT_length2`: measures of cephalothorax width and length (in mm), proxies of body size (each measured twice per individual). The number of decimals is just due to the measuring software; *actual* precision is roughly to 0.1mm    
 
-- Age at maturity
-- Adult longevity
-- Fecundity
+`pedigree` contains information about the pedigree of each individual:
 
-We add to that
+- `animal` is the spider unique ID
+- `patch`, `sex` and `generation` are as above
+- `FATHER` and `MOTHER` are the parents' unique IDs
 
-- body size information
-- dispersal information (presence/absence of dispersal-related behaviours; rappelling frequencies).
+`data_clutches` contains information about each egg clutch:
+- `ID` is the mother's unique ID
+- `clutchID` is the order of the clutch (1st laid by this mother, 2nd, 3rd...)
+- `date_laying` is the date the clutch was laid (again, more accurately, was first observed)
+- `N_cocoons` tells us whether the spider laid one eggsac or (happens almost never) two at the same time
+- `N_spiderlings` is the number of spiderlings that emerged, which is used as the basis of the fecundity measures
+- `Cocoon_hatched` is a binary indicator telling us if the cocoon successfully produced spiderlings
+
+`sites` contains information about each sampled patch:
+- `patch` IDs and `landscape` are same as above
+- `lat` and `lon` are sample site coordinates, which should be congruent with the GIS files below
+- `is_habitat` tells us whether a patch is expected to be an *E. longipalpis* habitat (i.e. if *Puccinellia maritima* dominates or is just present)
+- `N_adult females` tells us how many female spiders were found, and `hours_on_patch` / `person_hours_on_patch` tell us the research effort (we use the latter in our analysis)
+
+`pairings` is a two-column dataset mapping females `ID` to their mate `mateID`
+
+`weather` contains data for the nearest Meteo France station, extracted from the MeteoNet dataset (see README for citation details and metadata source)
+- `number_sta` 	ground station ID 	-
+- `lat` and `lon` are the coordinates of the station 
+- `height_sta` 	station height 	meters (m)
+- `date` is in format 'YYYY-MM-DD HH: mm :ss'
+- `dd` 	Wind direction 	degrees (°)
+- `ff` 	Wind speed 	m.s-1
+- `precip` 	Precipitation during the reporting period 	kg.m2
+- `hu` 	Humidity 	percentage (%)
+- `td` 	Dew point 	Kelvin (K)
+- `t` 	Temperature 	Kelvin (K)
+- `psl` 	Pressure reduced to sea level 	Pascal (Pa)
 
 
 Let's also load what we'll need for the map **Figure 1** (see also the `erigone-2018_supplementary` file for other uses of these map data):
@@ -116,6 +170,10 @@ patches<-st_read(here("data","erigone2018_GISlayers.gpkg"),
 coastline<-st_read(here("data","erigone2018_GISlayers.gpkg"),
         layer="coastline")
 ```
+
+- `points` is a layer containing the centers/centroids of all our sampling sites
+- `patches` is a layer containing land cover, specifically divided in "matrix", "*Puccinellia maritima present*", "*Puccinellia maritima* dominant" (in our study area, *Erigone longipalpis*r is more or less specialist of habitats with *P. maritima* dominant)
+- `coastline` is a world map, used here for an inset showing where our study site is on the European coastline
 
 ## Various checks
 
@@ -147,7 +205,7 @@ weather %>%
 
 Let's check how many females were caught in the field, and in how many patches:
 
-```{r}
+```{r sampling-check}
 sum(sites$N_adult_females) # number of females caught total
 
 sites %>% group_by(landscape,is_habitat) %>% 
@@ -157,7 +215,7 @@ sites %>% group_by(landscape,is_habitat) %>%
 
 How many spiders kept after adulthood were born in the lab:
 
-```{r}
+```{r pedigree-size-check}
 pedigree %>% 
   filter(generation>0) %>% 
   group_by(sex) %>% 
@@ -166,13 +224,13 @@ pedigree %>%
 
 How many spiderlings hatched:
 
-```{r}
+```{r total-babies-check}
 sum(data_clutches$N_spiderlings)
 ```
 
 How many wild caught females produced eggs and babies:
 
-```{r}
+```{r number-wildmothers-check}
 ## number of wild females that produced cocoons and babies
 data_females %>% 
   select(ID,patch,generation) %>% 
@@ -189,7 +247,7 @@ data_females %>%
 ```
 
 How many mating each male was involved with, and how many males were involved in mating:
-```{r}
+```{r check-male-matings}
 ### how many unique males were used in matings?
 pairings$mateID %>% na.omit() %>% unique() %>% length()
 
@@ -218,9 +276,16 @@ fecundity <- data_clutches %>%
   group_by(ID) %>% 
   summarise(lifetime_fecundity=sum(N_spiderlings),
             N_cocoons=sum(N_cocoons),
-            N_cocoons_hatched=sum(Cocoon_hatched))
+            N_cocoons_hatched=sum(Cocoon_hatched)) %>% 
+  full_join(pairings) %>%   ## to add the females that *were* mated but did not produce any clutches
+  mutate(
+    lifetime_fecundity = replace_na(lifetime_fecundity,0), # to give these females their proper value
+    N_cocoons=replace_na(N_cocoons,0),
+    N_cocoons_hatched=sum(Cocoon_hatched)
+  )
 ```
 
+we merge the fecundity data to the rest of the data, we remove the wild caught spiders for the set, and we convert dates to life stage durations. We also create a new variable combining the two types of pre-dispersal behaviours, and indicator variables to detect life stage durations that may be imprecise due to gaps:
 
 ```{r data-wrangling-2}
 data <- left_join(data_females,fecundity) %>%
@@ -246,7 +311,10 @@ data <- left_join(data_females,fecundity) %>%
                              date_maturity=="2018-05-02" | date_death== "2018-05-02" |
                                date_maturity=="2018-05-09" | date_death=="2018-05-09" ~ "yes",
                              T~ "no"))
+```
 
+We create more indicator variables, to identify the special case/justifed NAs: censored longevities, time available for reproduction, whether the individual mated
+```{r data-wrangling-3}
 ## we continue by creating indicator variables
 
 data <- data %>% 
@@ -256,8 +324,8 @@ data <- data %>%
   )
 ```
 
-Now we need to pivot the size data
-```{r}
+Now, for our analysis, we need the size data to be in the long format (rather than the wide with 1st and 2nd measurement having their own column). We create a temporary size dataset to do that
+```{r size-wrangling-1}
 temp_length<- data %>%
   select(ID,patch,CT_length1,CT_length2) %>% 
   pivot_longer(cols=c(CT_length1,CT_length2),
@@ -273,7 +341,10 @@ temp_width<- data %>%
                values_to="CT_width") 
 
 temp_size=left_join(temp_length,temp_width)
+```
 
+Then we merge that temporary dataset back to the main one
+```{r size-wrangling-2}
 data<-data %>% 
   select(-c(CT_length1,CT_length2,CT_width1,CT_width2)) %>%
   left_join(temp_size)
@@ -286,7 +357,9 @@ data <- data %>%
 
 ```
 
-```{r data-wrangling-2}
+But doing that means we duplicated the other data. We need indicator variables so that `brms` can ignore the duplicates during fitting. These same indicator variables can tell it to ignore relevant NAs (like no dispersal because individual died before, no fecundity because unmated)
+
+```{r data-wrangling-4}
 
 data <- data %>% 
   mutate(valid_dispersal = as.numeric(is.na(N_tiptoe)==FALSE & 
@@ -302,9 +375,19 @@ data <- data %>%
 
 ```
 
+One last, thing, we need to get the `MOTHER` identity info into our dataset, it's goig to be useful later. We can get it from the `pedigree` data
+
+```{r mother-info}
+data <- data %>% 
+  mutate(animal=ID) %>% 
+  left_join(pedigree)
+
+save(list=c("data"),file=here("R_output","processed_data.Rdata"))
+```
+
 Now that we have our clean data, let's do a few more checks for methods
 
-```{r}
+```{r last-data-checks}
 mean(data$date_mating-data$date_maturity,na.rm=TRUE)
 sd(data$date_mating-data$date_maturity,na.rm=TRUE)
 range(as.numeric(data$date_mating-data$date_maturity),na.rm=TRUE)
@@ -320,25 +403,8 @@ range(as.numeric(data$date_mating-data$date_maturity),na.rm=TRUE)
  sum(!is.na(data$date_mating) & data$time_for_repro>0 & data$measurement==1)
 ```
 
-```{r need_for_family_model}
-data <- data %>% 
-  mutate(animal=ID) %>% 
-  left_join(pedigree)
 
-save(list=c("data"),file=here("R_output","processed_data.Rdata"))
-```
-
-
-```{r dummy}
-#
-#data <- data %>% 
-#  mutate(N_tiptoe = replace_na(N_tiptoe,0),
-#         time_to_maturity= replace_na(time_to_maturity,0),
-#         adult_longevity= replace_na(adult_longevity,0),
-#         lifetime_fecundity = replace_na(lifetime_fecundity,0))
-#
-
-```
+We can start to fit models, yeah :)
 
 # The models
 
