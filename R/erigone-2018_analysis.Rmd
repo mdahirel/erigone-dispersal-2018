@@ -16,7 +16,7 @@ editor_options:
 knitr::opts_chunk$set(echo = TRUE)
 ```
 
-# A brief **Introduction**
+# A brief Introduction
 
 The aims of this study were:
 
@@ -26,34 +26,30 @@ The aims of this study were:
 
 - (iii) to split phenotypic covariation into its genetic, maternal and environmental components. In the end however, this had to be scaled down to a more modest "split into within- and among-family components" due to relatively low N and sparse pedigree.
 
-# **Starters and data wrangling**
+# Starters and data wrangling
 
 ## Packages
 
-Let's start by loading the packages we need
+Let's start by loading the packages we need:
 
-```{r load-packages1}
-library(arm)
-library(matrixStats)
-library(lubridate) ## conflict with here
+```{r load-packages}
+library(lubridate)
 library(tidyverse)
 
 ## spatial stuff for Figure 1
 library(ggspatial)
 library(osmdata)
 library(sf)
-```
 
-```{r load-packages2}
-library(cmdstanr) ## Stan backend
-library(brms) ## the interface we are using
+library(cmdstanr) 
+## Stan backend
+library(brms) 
+## the interface we are using
 library(bayesplot)
 library(tidybayes)
 library(ggtext)
-library(patchwork) #plotting
-```
+library(patchwork)
 
-```{r load-packages3}
 library(here)
 
 options(mc.cores = 4)
