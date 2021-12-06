@@ -623,6 +623,7 @@ plot3_a + plot3_b + plot3_c + plot3_d + plot3_e +
 
 **Figure S5.1.** Phenotypic traits of lab-born spiders as a function of landscape of origin. Observed data are displayed as boxplots (one boxplot per patch of origin), alongside model posteriors. Predictions are based on the model where individual trait co-variance **is** partitioned between among- and within-family components; see main text **Fig. 3** for a similar figure based on the model where individual-level variation is **not** partitioned.
 
+
 # Supplementary Material 6: overall within-patch, individual-level correlations among traits, based on the "split variance" model
 
 **Supplementary Table S6.1.** Means and 95% Higher Posterior Density intervals for the overall individual-level correlations among traits, based on the model where individual-level (co-)variance is split into among- and within-family levels (compare with **Table 1a** in the main text, which is based on the model where individual-level variation is **not** split into its among- and within-family components).
