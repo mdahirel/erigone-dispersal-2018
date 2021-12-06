@@ -1,7 +1,12 @@
 # erigone-dispersal-2018/data
  
- data as of 2021-05-07
-
-- main data entry done: all NAs are true NAs, not "to be entered data"
-- IMPORTANT note about dates: with the exception of `date_mating`, all dates are dates at which the phenomenon was **observed**, not dates at which it happened. Important to account for weekends and French public holidays (except August 15 when I worked) to calculate life periods durations, and to use survival models with interval censoring, or use times at rougher time scales (week?)
-- environmental data (GIS layers): to be cleaned and included in repo? to be decided
+ (see the preprint and the comments in the analysis code in `R` for more information)
+ 
+ - `cocoons` contain data about each egg-sac (who laid it? how many spiderlings?)
+ - `females` and `males` contain individual-level information about each adult spider kept for the experiment
+ - `pairings` is a list of every male-female reproductive pair created for this experiment
+ - `pedigree` gives the, well, pedigree of each adult used in the experiment, i.e. the ID of both its parents
+ - the `GISlayers` geopackage contains vector layers for the sampling sites and for the land cover as seen from the spider perspective (favourable habitat or not)
+ - the `raster_pucci` files are rasterizations of this land cover layer using two discretisations: either "habitat dominated by *Puccinellia maritima* versus all others" or "habitat where *Puccinellia* is present even if not dominant versus others"
+ -  `sites` is a table summarising information about each sampling site, including sampling effort and number of spider caught
+ -  the `weather_data` folder contains a copy of open source weather data for the nearest weather station; see details in there
