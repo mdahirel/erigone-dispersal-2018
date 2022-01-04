@@ -1,13 +1,13 @@
 # Dispersal and dispersal syndromes in *Erigone longipalpis* spiders
 
-repo DOI to add here after first release
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.5761384.svg)](https://doi.org/10.5281/zenodo.5761384)
 
 This repository contains all data and code needed to re-do the analyses and figures in our manuscript
 
 "Dispersal syndrome and landscape fragmentation in the salt-marsh specialist spider *Erigone longipalpis*"
 (by Maxime Dahirel, Marie Wullschleger, Tristan Berry, Solène Croci, Julien Pétillon)
 
-(link to bioRxiv preprint to add here)
+(link to bioRxiv preprint: https://doi.org/10.1101/2021.12.06.471390)
 
 data in .csv format are in the `data` folder, R script in .Rmd format (including detailed information about the analysis) in the `R` folder.
 
