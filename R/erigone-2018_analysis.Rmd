@@ -1011,6 +1011,8 @@ summary_mod_pop <- mod_pop %>%
   mean_hdi()
 
 summary_mod_pop
+
+newdata_pop %>% group_by(landscape) %>% mean_hdi(.epred)
 ```
 
 
@@ -1043,6 +1045,13 @@ summary_mmod2 %>%
 ## let's look at the Beta coeffs:
 summary_mmod2 %>%
   filter(substr(name, 1, 2) == "b_")
+
+
+newdata_maturity %>% group_by(landscape) %>% mean_hdi(.epred)
+newdata_size %>% group_by(landscape) %>% mean_hdi(.epred)
+newdata_dispersal %>% group_by(landscape) %>% mean_hdi(.epred)
+newdata_fecundity %>% group_by(landscape) %>% mean_hdi(.epred)
+newdata_longevity %>% group_by(landscape) %>% mean_hdi(.epred)
 ```
 
 And we can use these summaries to produce the correlation tables between the traits. First the individula-level correlation table from the first model, where it is not partitioned into within and among family component:

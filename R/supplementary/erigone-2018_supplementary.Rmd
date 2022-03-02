@@ -23,9 +23,9 @@ library(landscapemetrics)
 
 ## model stuff
 library(cmdstanr)
-library(brms)
 library(tidyverse)
 library(tidybayes)
+library(brms)
 
 ## plotting stuff
 library(ggtext)
@@ -228,7 +228,7 @@ landscape_data %>%
 
 # Supplementary Material 2. Relationship between the numbers of lab-born spiders and wild-caught spiders sourced from a patch
 
-If the lab-born adult spiders we tested were selected randomly from the pool of just-maturing adults, then their distribution with respect to their "ancestral" patch should reflect the distribution of the wild caught spiders with respect to patch (unless there are substantial among-patch variation in fecundity, and we can see in main text **Figure 3** that there are not). We checked that assumption (**Figure S2.1**) and it seems to hold.
+If the lab-born adult spiders we tested were selected randomly from the pool of just-maturing adults, then their distribution with respect to their "ancestral" patch should reflect the distribution of the wild caught spiders with respect to patch (unless there are substantial among-patch variation in fecundity, and we can see in main text **Figure 3** that there is not). We checked that assumption (**Figure S2.1**) and it seems to hold.
 
 ```{r fig-s2-1, fig.dim = c(4, 4.5)}
 count_females <- read_csv(here("data", "erigone2018_females.csv"),
@@ -486,7 +486,7 @@ plot2 <- ggplot() +
 plot2
 ```
 
-**Figure S4.1.** Effect of landscape of origin on the number of spiders found per patch (weighted by sampling effort). White dots corresponding to observed data are shown alongside model posteriors. Contrary to main text **Fig. 2**, all visited patches are included here, even those where *Puccinellia maritima* is not dominant.
+**Figure S4.1.** Effect of landscape of origin on the number of spiders found per patch (weighted by sampling effort). White dots correspond to observed data, black dots and segments to posterior means and 95% intervals, and the posterior density distributions of the predicted means are displayed in green. Contrary to main text **Fig. 2**, all visited patches are included here, even those where *Puccinellia maritima* is not dominant.
 
 
 # Supplementary Material 5. Effect of landscape of origin on phenotypic traits, revisited
@@ -621,7 +621,7 @@ plot3_a + plot3_b + plot3_c + plot3_d + plot3_e +
   plot_layout(design = layout) & theme_bw()
 ```
 
-**Figure S5.1.** Phenotypic traits of lab-born spiders as a function of landscape of origin. Observed data are displayed as boxplots (one boxplot per patch of origin), alongside model posteriors. Predictions are based on the model where individual trait co-variance **is** partitioned between among- and within-family components; see main text **Fig. 3** for a similar figure based on the model where individual-level variation is **not** partitioned.
+**Figure S5.1.** Phenotypic traits of lab-born spiders as a function of landscape of origin. Observed data are displayed as boxplots (one boxplot per patch of origin); black dots and segments represent posterior means and 95% intervals, and are displayed along the posterior density distributions of the predicted means in green. Predictions are based on the model where individual trait co-variance **is** partitioned between among- and within-family components; see main text **Fig. 3** for a similar figure based on the model where individual-level variation is **not** partitioned.
 
 
 # Supplementary Material 6: overall within-patch, individual-level correlations among traits, based on the "split variance" model
@@ -629,11 +629,13 @@ plot3_a + plot3_b + plot3_c + plot3_d + plot3_e +
 **Supplementary Table S6.1.** Means and 95% Higher Posterior Density intervals for the overall individual-level correlations among traits, based on the model where individual-level (co-)variance is split into among- and within-family levels (compare with **Table 1a** in the main text, which is based on the model where individual-level variation is **not** split into its among- and within-family components).
 <!--the table is filled manually here for convenience, see at the end of the main code for how to get these correlations-->
 
+\small
 |  |Time to maturity| Body size| Dispersal| Fecundity |
 |-----|-----|-----|-----|-----|
-|Body size| -0.36 [-0.51; -0.19] |                     |                     |                     |
-| Dispersal| -0.37 [-0.53; -0.20] | 0.13 [0.01; 0.26]   |                     |                     |
-| Fecundity| -0.28 [-0.46; -0.10] | 0.27 [0.12; 0.43]   | 0.19 [0.06; 0.32]   |                     |
-| Adult longevity| 0.00 [-0.17; 0.18]   | -0.23 [-0.36; -0.08] | 0.04 [-0.10; 0.19]  | -0.05 [-0.21; 0.11] |
+|Body size| **-0.36 [-0.51; -0.19]** |                     |                     |                     |
+| Dispersal| **-0.37 [-0.53; -0.20]** | **0.13 [0.01; 0.26]**   |                     |                     |
+| Fecundity| **-0.28 [-0.46; -0.10]** | **0.27 [0.12; 0.43]**   | **0.19 [0.06; 0.32]**   |                     |
+| Adult longevity| 0.00 [-0.17; 0.18]   | **-0.23 [-0.36; -0.08]** | 0.04 [-0.10; 0.19]  | -0.05 [-0.21; 0.11] |
+\normalsize
 
 # References
